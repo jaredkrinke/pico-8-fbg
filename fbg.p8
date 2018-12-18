@@ -83,7 +83,7 @@ local debug_message = nil
 -- game state
 local board = {}
 local score = 0
-local cleared = 0
+local lines = 0
 local level = 0
 local game_over = false
 local game_paused = false
@@ -156,7 +156,25 @@ function board_clean()
     return cleared, top
 end
 
+function game_score_update(cleared)
+    local fast_drop_points = 0
+    if fast_drop then
+        fast_drop_points = fast_drop_row - piece.j
+        score = score + fast_drop_points
+    end
+
+    if cleared >= 1 and cleared <= #cleared_to_score then
+        score = score + cleared_to_score[cleared] * (level + 1)
+        lines = lines + cleared
+        if level < flr(lines / 10) then
+            level = level + 1
+        end
+    end
+end
+
 function game_end()
+    game_paused = true
+    game_over = true
 end
 
 function switch_piece()
@@ -253,6 +271,7 @@ function piece_move_down()
             piece_complete()
 
             local cleared = board_clean()
+            game_score_update(cleared)
             -- todo: scoring, next piece
 
             fast_drop = false
@@ -284,14 +303,18 @@ function piece_rotate_ccw()
 end
 
 function get_drop_period()
-    return drop_periods[level + 1]
+    if level < #drop_periods then
+        return drop_periods[level + 1]
+    else
+        return drop_periods[#drop_periods]
+    end
 end
 
 function reset()
     board_reset()
     switch_piece()
     score = 0
-    cleared = 0
+    lines = 0
     level = 0
     game_over = false
     game_paused = false
@@ -429,6 +452,17 @@ function _draw()
         end
     end
     clip()
+
+    cursor(80, 16)
+    color(colors.white)
+    print("level: " .. level)
+    print("lines: " .. lines)
+    print("score: " .. score)
+
+    if game_over then
+        print("")
+        print("game over!")
+    end
 
     if debug and debug_message ~= nil then
         print(debug_message, 0, 122, colors.white)
