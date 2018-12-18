@@ -112,12 +112,48 @@ local piece = {
 }
 
 -- game logic
-function clear_board()
+function board_reset()
     for j=1, board_height do
         for i=1, board_width do
             board[j][i] = colors.black
         end
     end
+end
+
+function board_remove_row(j0)
+    for j=j0, board_height do
+        for i=1, board_width do
+            local v = colors.black
+            if j < board_height then v = board[j + 1][i] end
+            board[j][i] = v
+        end
+    end
+end
+
+function board_clean()
+    local cleared = 0
+    local top = 0
+    local j = 1
+
+    while j + cleared <= board_height do
+        local completed = true
+        for i=1, board_width do
+            if not board_occupied(i, j) then
+                completed = false
+                break
+            end
+        end
+
+        if completed then
+            board_remove_row(j)
+            top = j + cleared
+            cleared = cleared + 1
+        else
+            j = j + 1
+        end
+    end
+
+    return cleared, top
 end
 
 function game_end()
@@ -216,8 +252,8 @@ function piece_move_down()
         else
             piece_complete()
 
-            -- todo: check for completed rows, etc.
-            local cleared = 0
+            local cleared = board_clean()
+            -- todo: scoring, next piece
 
             fast_drop = false
             piece.piece_index = 0
@@ -252,7 +288,7 @@ function get_drop_period()
 end
 
 function reset()
-    clear_board()
+    board_reset()
     switch_piece()
     score = 0
     cleared = 0
