@@ -541,11 +541,15 @@ function _draw()
     local x2, y2 = board_offset + block_size * board_width - 1, board_offset + block_size * board_height - 1
     draw_box(board_offset, board_offset, x2, y2)
     clip(board_offset, board_offset, block_size * board_width, block_size * board_height)
+    local deleted_count = 0
+    for j=1, board_height do if board[j].deleted then deleted_count = deleted_count + 1 end end
+
+    local t = 1 - (timer_next_piece / (next_piece_delay + clear_delay))
+    local flash = t >= 0 and t < 0.5 and (flr(t * 8) % 2 == 1)
     for j=1, board_height do
         local deleted = board[j].deleted
         local draw = true
         if deleted then
-            local t = 1 - (timer_next_piece / (next_piece_delay + clear_delay))
             if t <= 0.1 then
                 fade_palette(1)
             elseif t <= 0.3 then
@@ -568,6 +572,12 @@ function _draw()
 
         if deleted then
             pal()
+        end
+
+        -- quad effect
+        if flash and deleted and deleted_count >= 4 then
+            local x, y = map_position(1, j)
+            rectfill(x, y, x + board_width * block_size, y + block_size, colors.white)
         end
     end
 
