@@ -39,6 +39,8 @@ local sprites = {
     right_snake = 4,
     square = 5,
     tee = 6,
+
+    title = 8,
 }
 
 -- game data
@@ -116,7 +118,8 @@ local timer_fast_move = 0
 local timer_drop = 0
 
 local piece = {
-    piece_index = 1,
+    index = 1,
+    next_index = 1,
     rotation_index = 1,
     i = 0,
     j = 0,
@@ -189,7 +192,13 @@ function game_end()
 end
 
 function switch_piece()
-    piece.piece_index = flr(rnd(#pieces)) + 1
+    local iterations = 1
+    if piece.next_index == 0 then iterations = 2 end
+    for i=1, iterations do
+        piece.index = piece.next_index
+        piece.next_index = flr(rnd(#pieces)) + 1
+    end
+
     piece.rotation_index = 1
     piece.i = 4
     piece.j = 20
@@ -204,7 +213,7 @@ function piece_for_each_block(callback, i, j, rotation_index)
     local j0 = j or piece.j
     local rotation_index = rotation_index or piece.rotation_index
 
-    local piece_blocks = pieces[piece.piece_index][rotation_index]
+    local piece_blocks = pieces[piece.index][rotation_index]
     for n=1, #piece_blocks do
         local offsets = piece_blocks[n]
         local i = i0 + offsets[1]
@@ -263,14 +272,14 @@ end
 function piece_complete()
     piece_for_each_block(function (i, j)
         if i >= 1 and i <= board_width and j >= 1 and j <= board_height then
-            board[j][i] = piece.piece_index
+            board[j][i] = piece.index
         end
         return true
     end)
 end
 
 function piece_move_down()
-    if piece.piece_index > 0 then
+    if piece.index > 0 then
         if piece_try_move_down() then
             -- check for slide underneath
             if btn(buttons.left) and not piece_test_move(-1, 1) and piece_test_move(-1, 0) then
@@ -286,7 +295,7 @@ function piece_move_down()
             -- todo: scoring, next piece
 
             fast_drop = false
-            piece.piece_index = 0
+            piece.index = 0
             timer_next_piece = next_piece_delay
 
             if cleared > 0 then
@@ -297,7 +306,7 @@ function piece_move_down()
 end
 
 function piece_try_rotate(offset)
-    local rotation_index = (piece.rotation_index - 1 + offset) % #pieces[piece.piece_index] + 1
+    local rotation_index = (piece.rotation_index - 1 + offset) % #pieces[piece.index] + 1
     if piece_validate(nil, nil, rotation_index) then
         piece.rotation_index = rotation_index
         return true
@@ -323,6 +332,8 @@ end
 
 function reset()
     board_reset()
+    piece.index = 0
+    piece.next_index = 0
     switch_piece()
     score = 0
     lines = 0
@@ -348,12 +359,12 @@ end
 
 function _update60()
     if not game_paused then
-        if piece.piece_index == 0 and timer_next_piece > 0 then
+        if piece.index == 0 and timer_next_piece > 0 then
             timer_next_piece = timer_next_piece - 1
         else
-            if piece.piece_index == 0 then
+            if piece.index == 0 then
                 switch_piece()
-                if piece.piece_index > 0 and not piece_validate() then
+                if piece.index > 0 and not piece_validate() then
                     game_end()
                 end
             end
@@ -430,13 +441,17 @@ function map_position(i ,j)
     return board_offset + block_size * (i - 1), board_offset + block_size * (20 -  j)
 end
 
-function draw_block(i, j, v)
-    local x, y = board_offset + block_size * (i - 1), board_offset + block_size * (20 -  j)
+function draw_block_absolute(x, y, v)
     spr(piece_sprites[v], x, y)
 end
 
+function draw_block(i, j, v)
+    local x, y = board_offset + block_size * (i - 1), board_offset + block_size * (20 -  j)
+    draw_block_absolute(x, y, v)
+end
+
 function _draw()
-    cls(colors.dark_blue)
+    cls(colors.indigo)
 
     local x2, y2 = 3 + block_size * board_width - 1, 3 + block_size * board_height - 1
     rectfill(board_offset, board_offset, x2, y2, colors.black)
@@ -453,18 +468,24 @@ function _draw()
     end
 
     -- piece
-    if piece.piece_index > 0 then
-        local piece_blocks = pieces[piece.piece_index][piece.rotation_index]
+    if piece.index > 0 then
+        local piece_blocks = pieces[piece.index][piece.rotation_index]
         local i1 = piece.i
         local j1 = piece.j
         for i=1, #piece_blocks do
             local block = piece_blocks[i]
-            draw_block(i1 + block[1], j1 + block[2], piece.piece_index)
+            draw_block(i1 + block[1], j1 + block[2], piece.index)
         end
     end
     clip()
 
-    cursor(64 + board_offset, board_offset)
+    palt(colors.black, false)
+    spr(sprites.title, 64, 0, 8, 4)
+    palt()
+
+    local x, y = 64 + board_offset, 32 + board_offset
+    rectfill(x - 1, y - 1, x + 14 * 4 - 1, y + 3 * 6 - 1)
+    cursor(x, y)
     color(colors.white)
     print("level: " .. level)
     print("lines: " .. lines)
@@ -480,9 +501,35 @@ function _draw()
     end
 end
 __gfx__
-dddddd00aaaaaa0011111100aaaaaa0099999900aaaaa900cccccd00000000000000000000000000000000000000000000000000000000000000000000000000
-dcccc100aaaaaa001cccc100a999940099999900aaaa9900ccccdd00000000000000000000000000000000000000000000000000000000000000000000000000
-dcccc100aa99aa001cddd100a999940099449900aaa99900cccddd00000000000000000000000000000000000000000000000000000000000000000000000000
-dcccc100aa99aa001cddd100a999940099449900aa449900cc11dd00000000000000000000000000000000000000000000000000000000000000000000000000
-dcccc100a4444a001cddd100a999940092222900a4444900c1111d00000000000000000000000000000000000000000000000000000000000000000000000000
-d11111004444440011111100a4444400222222004444440011111100000000000000000000000000000000000000000000000000000000000000000000000000
+dddddd00aaaaaa0011111100aaaaaa0099999900aaaaa900cccccd0000000000dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+dcccc100aaaaaa001cccc100a999940099999900aaaa9900ccccdd0000000000dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+dcccc100aa99aa001cddd100a999940099449900aaa99900cccddd0000000000dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+dcccc100aa99aa001cddd100a999940099449900aa449900cc11dd0000000000dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+dcccc100a4444a001cddd100a999940092222900a4444900c1111d0000000000ddddddd000dddddd0d0dddddddddddddddd0000dd0ddddddddddd0dddddddddd
+d11111004444440011111100a444440022222200444444001111110000000000dddddd07770d00d070700ddddddddddddd077770070ddddddddd070ddddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddd0700d077007070700d0ddd00ddd5070007070d00ddd0000700dddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddd07000700707070007070d0770d560777700700770d077707070ddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddd077700777070707077070700706a0700070707007070000770dddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddd07000700707070707007070070aa07000707070070700007070ddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddd070d0777707070707007007770aa0777700700770d0777070070dddddd
+0000000000000000000000000000000000000000000000000000000000000000ddddddd0ddd0000d0d0d0d0dd0dd0070aaa0000dd0dd00ddd000d0dd0ddddddd
+0000000000000000000000000000000000000000000000000000000000000000ddddddddddddddddddddddddddd0770994444465dddddddddddddddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddddddddddddddddddddddd560099944446a65ddddddddddddddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000ddddddddddddddddddddddddd56aaa6990006aaa65dddddddddddddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddddddddddddddddddddd56aaaaa607770aa006500000dd00dddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000ddddddddddddddddddddddd56aaaaaa07000aa077007707700770ddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddddddddddddddddddd56999944407090007007070707070070dddddddddd
+0000000000000000000000000000000000000000000000000000000000000000ddddddddddddddddddddddd569994440700770077707070707770ddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddddddddddddddddddddd56994440700070700707070707000ddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000ddddddddddddddddddddddddd56944650777007777070707007770dddddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddddddddddddddddddddddd56465dd000560000a0a0a00d000ddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000ddddddddddddddddddddddddddd565ddddddd5699994444465dddddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddddddddddddddddddddddddd5ddddddddd56999444465ddddddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000ddddddddddddddddddddddddddddddddddddddd569944465dddddddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddddddddddddddddddddddddddddddddddddd5694465ddddddddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000ddddddddddddddddddddddddddddddddddddddddd56465dddddddddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddddddddddddddddddddddddddddddddddddddd565ddddddddddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000ddddddddddddddddddddddddddddddddddddddddddd5dddddddddddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+0000000000000000000000000000000000000000000000000000000000000000dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
