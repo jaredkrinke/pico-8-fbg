@@ -68,6 +68,8 @@ local piece_sprites = {
     sprites.line,
     sprites.tee,
 }
+local piece_widths = { 3, 3, 3, 3, 2, 4, 3 }
+local piece_heights = { 2, 2, 2, 2, 2, 1, 2 }
 local pieces = {
     {   { { 1, 0 }, { 2, 0 }, { 2, -1 }, { 3, -1 } },
         { { 3, 1 }, { 2, 0 }, { 3, 0 },  { 2, -1 } }, },
@@ -191,15 +193,23 @@ function game_end()
     game_over = true
 end
 
-function switch_piece()
-    local iterations = 1
-    if piece.next_index == 0 then iterations = 2 end
-    for i=1, iterations do
-        piece.index = piece.next_index
-        piece.next_index = flr(rnd(#pieces)) + 1
+function piece_hide()
+    piece.index = 0
+end
+
+function piece_choose_next()
+    piece.next_index = flr(rnd(#pieces)) + 1
+end
+
+function piece_advance()
+    piece_hide()
+    if piece.next_index == 0 then
+        piece_choose_next()
     end
 
+    piece.index = piece.next_index
     piece.rotation_index = 1
+    piece_choose_next()
     piece.i = 4
     piece.j = 20
 end
@@ -295,7 +305,7 @@ function piece_move_down()
             -- todo: scoring, next piece
 
             fast_drop = false
-            piece.index = 0
+            piece_hide()
             timer_next_piece = next_piece_delay
 
             if cleared > 0 then
@@ -334,7 +344,7 @@ function reset()
     board_reset()
     piece.index = 0
     piece.next_index = 0
-    switch_piece()
+    piece_advance()
     score = 0
     lines = 0
     level = 0
@@ -363,7 +373,7 @@ function _update60()
             timer_next_piece = timer_next_piece - 1
         else
             if piece.index == 0 then
-                switch_piece()
+                piece_advance()
                 if piece.index > 0 and not piece_validate() then
                     game_end()
                 end
@@ -446,8 +456,23 @@ function draw_block_absolute(x, y, v)
 end
 
 function draw_block(i, j, v)
-    local x, y = board_offset + block_size * (i - 1), board_offset + block_size * (20 -  j)
+    local x, y = map_position(i, j)
     draw_block_absolute(x, y, v)
+end
+
+function draw_piece_absolute(x, y, index, rotation_index)
+    if index > 0 then
+        local piece_blocks = pieces[index][rotation_index]
+        for i=1, #piece_blocks do
+            local block = piece_blocks[i]
+            draw_block_absolute(x + block_size * block[1], y - block_size * block[2], index)
+        end
+    end
+end
+
+function draw_piece(i, j, index, rotation_index)
+    local x, y = map_position(i, j)
+    draw_piece_absolute(x, y, index, rotation_index)
 end
 
 function _draw()
@@ -467,24 +492,23 @@ function _draw()
         end
     end
 
-    -- piece
-    if piece.index > 0 then
-        local piece_blocks = pieces[piece.index][piece.rotation_index]
-        local i1 = piece.i
-        local j1 = piece.j
-        for i=1, #piece_blocks do
-            local block = piece_blocks[i]
-            draw_block(i1 + block[1], j1 + block[2], piece.index)
-        end
-    end
+    -- pieces
+    draw_piece(piece.i, piece.j, piece.index, piece.rotation_index)
     clip()
 
+    local x, y = 64 + board_offset, 32 + board_offset + 4 * 6
+    rectfill(x - 1, y - 1, x + 14 * 4 - 1, y + 2 * block_size, colors.black)
+    print("next:", x, y + 2 * block_size / 2 - 3, colors.white)
+    draw_piece_absolute(96 - block_size, y, piece.next_index, 1)
+
+    -- title
     palt(colors.black, false)
     spr(sprites.title, 64, 0, 8, 4)
     palt()
 
-    local x, y = 64 + board_offset, 32 + board_offset
-    rectfill(x - 1, y - 1, x + 14 * 4 - 1, y + 3 * 6 - 1)
+    -- score
+    y = 32 + board_offset
+    rectfill(x - 1, y - 1, x + 14 * 4 - 1, y + 3 * 6 - 1, colors.black)
     cursor(x, y)
     color(colors.white)
     print("level: " .. level)
@@ -492,8 +516,8 @@ function _draw()
     print("score: " .. score)
 
     if game_over then
-        print("")
-        print("game over!")
+        rectfill(32 - 5 * 4, 64 - 3, 32 + 5 * 4, 64 + 3, colors.indigo)
+        print("game over!", 32 - 5 * 4 + 1, 64 - 2, colors.white)
     end
 
     if debug and debug_message ~= nil then
