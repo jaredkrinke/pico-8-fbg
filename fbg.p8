@@ -47,7 +47,7 @@ local sprites = {
 local board_width = 10
 local board_height = 20
 local block_size = 6
-local board_offset = 3
+local board_offset = 4
 
 local cleared_to_score = { 40, 100, 300, 1200 }
 local done_period = 60
@@ -69,6 +69,7 @@ local piece_sprites = {
     sprites.tee,
 }
 local piece_widths = { 3, 3, 3, 3, 2, 4, 3 }
+local piece_offsets = { 1, 1, 1, 1, 1, 0, 1 }
 local piece_heights = { 2, 2, 2, 2, 2, 1, 2 }
 local pieces = {
     {   { { 1, 0 }, { 2, 0 }, { 2, -1 }, { 3, -1 } },
@@ -475,13 +476,40 @@ function draw_piece(i, j, index, rotation_index)
     draw_piece_absolute(x, y, index, rotation_index)
 end
 
+function draw_box(x1, y1, x2, y2, label)
+    local border_color = colors.light_gray
+    rectfill(x1 - 1, y1 - 1, x2 + 1, y1 - 1, border_color)
+    rectfill(x1 - 1, y1, x1 - 1, y2, border_color)
+    rectfill(x2 + 1, y1, x2 + 1, y2, border_color)
+    rectfill(x1 - 1, y2 + 1, x2 + 1, y2 + 1, border_color)
+    rectfill(x1, y1, x2, y2, colors.black)
+
+    if label ~= nil then
+        print(label, x1 + (x2 - x1) / 2 - #label * 4 / 2 + 1, y1 + 1, colors.white)
+    end
+end
+
+function draw_box_number(x, y, label, number, digits)
+    local x1 = x - 1
+    local y1 = y - 1
+    local x2 = x1 + 4 * max(#label, digits)
+    local y2 = y + 11
+    draw_box(x1, y1, x2, y2, label)
+    local number_string = "" .. number
+    print(number_string, x1 + (x2 - x1) / 2 - 2 * #number_string + 1, y + 6, colors.white)
+end
+
 function _draw()
     cls(colors.indigo)
 
-    local x2, y2 = 3 + block_size * board_width - 1, 3 + block_size * board_height - 1
-    rectfill(board_offset, board_offset, x2, y2, colors.black)
+    -- title
+    palt(colors.black, false)
+    spr(sprites.title, 64, 0, 8, 4)
+    palt()
 
     -- board
+    local x2, y2 = board_offset + block_size * board_width - 1, board_offset + block_size * board_height - 1
+    draw_box(board_offset, board_offset, x2, y2)
     clip(board_offset, board_offset, block_size * board_width, block_size * board_height)
     for j=1, board_height do
         for i=1, board_width do
@@ -496,27 +524,18 @@ function _draw()
     draw_piece(piece.i, piece.j, piece.index, piece.rotation_index)
     clip()
 
-    local x, y = 64 + board_offset, 32 + board_offset + 4 * 6
-    rectfill(x - 1, y - 1, x + 14 * 4 - 1, y + 2 * block_size, colors.black)
-    print("next:", x, y + 2 * block_size / 2 - 3, colors.white)
-    draw_piece_absolute(96 - block_size, y, piece.next_index, 1)
-
-    -- title
-    palt(colors.black, false)
-    spr(sprites.title, 64, 0, 8, 4)
-    palt()
+    local x, y = 96 - 2 * block_size, 32 + board_offset + 9 * 6
+    draw_box(x - 1, y - 1, x + 4 * block_size, y + 6 + 4 + 2 * block_size, "next")
+    local next_index = piece.next_index
+    draw_piece_absolute(96 - piece_offsets[next_index] * block_size - piece_widths[next_index] * block_size / 2, y + 6 + 2 + (2 - piece_heights[next_index]) * block_size / 2, piece.next_index, 1)
 
     -- score
-    y = 32 + board_offset
-    rectfill(x - 1, y - 1, x + 14 * 4 - 1, y + 3 * 6 - 1, colors.black)
-    cursor(x, y)
-    color(colors.white)
-    print("level: " .. level)
-    print("lines: " .. lines)
-    print("score: " .. score)
+    draw_box_number(64 + board_offset + 1, 32 + board_offset + 6, "level", level, 2)
+    draw_box_number(128 - board_offset - 4 * 5, 32 + board_offset + 6, "lines", level, 3)
+    draw_box_number(96 - 7 * 2, 32 + board_offset + 5 * 6, "score", score, 7)
 
     if game_over then
-        rectfill(32 - 5 * 4, 64 - 3, 32 + 5 * 4, 64 + 3, colors.indigo)
+        rectfill(32 - 5 * 4, 64 - 3, 32 + 5 * 4, 64 + 3, colors.black)
         print("game over!", 32 - 5 * 4 + 1, 64 - 2, colors.white)
     end
 
