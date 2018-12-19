@@ -31,6 +31,16 @@ buttons = {
     x = 5,
 }
 
+local sprites = {
+    left_gun = 0,
+    left_snake = 1,
+    line = 2,
+    right_gun = 3,
+    right_snake = 4,
+    square = 5,
+    tee = 6,
+}
+
 -- game data
 local board_width = 10
 local board_height = 20
@@ -47,29 +57,31 @@ local next_piece_delay = 10
 local clear_delay = 20
 local drop_periods = { 48, 43, 38, 33, 28, 23, 18, 13, 8, 6, 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1 }
 
+local piece_sprites = {
+    sprites.left_snake,
+    sprites.right_snake,
+    sprites.left_gun,
+    sprites.right_gun,
+    sprites.square,
+    sprites.line,
+    sprites.tee,
+}
 local pieces = {
-    -- left snake
     {   { { 1, 0 }, { 2, 0 }, { 2, -1 }, { 3, -1 } },
         { { 3, 1 }, { 2, 0 }, { 3, 0 },  { 2, -1 } }, },
-    -- right snake
     {   { { 2, 0 }, { 3, 0 }, { 1, -1 }, { 2, -1 } },
         { { 2, 1 }, { 2, 0 }, { 3, 0 },  { 3, -1 } }, },
-    -- left gun
     {   { { 1, 0 }, { 2, 0 }, { 3, 0 },  { 3, -1 } },
         { { 2, 1 }, { 2, 0 }, { 1, -1 }, { 2, -1 } },
         { { 1, 1 }, { 1, 0 }, { 2, 0 },  { 3,  0 } },
         { { 2, 1 }, { 3, 1 }, { 2, 0 },  { 2, -1 } }, },
-    -- right gun
     {   { { 1, 0 }, { 2, 0 }, { 3, 0 },  { 1, -1 } },
         { { 1, 1 }, { 2, 1 }, { 2, 0 },  { 2, -1 } },
         { { 3, 1 }, { 1, 0 }, { 2, 0 },  { 3,  0 } },
         { { 2, 1 }, { 2, 0 }, { 2, -1 }, { 3, -1 } }, },
-    -- square
     {   { { 1, 0 }, { 2, 0 }, { 1, -1 },  { 2, -1 } }, },
-    -- line
     {   { { 0, 0 }, { 1, 0 }, { 2, 0 },  { 3,  0 } },
         { { 2, 2 }, { 2, 1 }, { 2, 0 },  { 2, -1 } }, },
-    -- tee
     {   { { 1, 0 }, { 2, 0 }, { 3, 0 }, { 2, -1 } },
         { { 2, 1 }, { 1, 0 }, { 2, 0 }, { 2, -1 } },
         { { 2, 1 }, { 1, 0 }, { 2, 0 }, { 3,  0 } },
@@ -108,14 +120,13 @@ local piece = {
     rotation_index = 1,
     i = 0,
     j = 0,
-    color = colors.green,
 }
 
 -- game logic
 function board_reset()
     for j=1, board_height do
         for i=1, board_width do
-            board[j][i] = colors.black
+            board[j][i] = 0
         end
     end
 end
@@ -123,7 +134,7 @@ end
 function board_remove_row(j0)
     for j=j0, board_height do
         for i=1, board_width do
-            local v = colors.black
+            local v = 0
             if j < board_height then v = board[j + 1][i] end
             board[j][i] = v
         end
@@ -185,7 +196,7 @@ function switch_piece()
 end
 
 function board_occupied(i, j)
-    return board[j][i] ~= colors.black
+    return board[j][i] ~= 0
 end
 
 function piece_for_each_block(callback, i, j, rotation_index)
@@ -252,7 +263,7 @@ end
 function piece_complete()
     piece_for_each_block(function (i, j)
         if i >= 1 and i <= board_width and j >= 1 and j <= board_height then
-            board[j][i] = piece.color
+            board[j][i] = piece.piece_index
         end
         return true
     end)
@@ -419,24 +430,24 @@ function map_position(i ,j)
     return board_offset + block_size * (i - 1), board_offset + block_size * (20 -  j)
 end
 
-function draw_block(i, j, c)
+function draw_block(i, j, v)
     local x, y = board_offset + block_size * (i - 1), board_offset + block_size * (20 -  j)
-    rectfill(x, y, x + block_size - 1, y + block_size - 1, c)
+    spr(piece_sprites[v], x, y)
 end
 
 function _draw()
-    cls()
+    cls(colors.dark_blue)
 
     local x2, y2 = 3 + block_size * board_width - 1, 3 + block_size * board_height - 1
-    rectfill(board_offset, board_offset, x2, y2, colors.dark_gray)
+    rectfill(board_offset, board_offset, x2, y2, colors.black)
 
     -- board
     clip(board_offset, board_offset, block_size * board_width, block_size * board_height)
     for j=1, board_height do
         for i=1, board_width do
-            local c = board[j][i]
-            if c ~= colors.black then
-                draw_block(i, j, c)
+            local v = board[j][i]
+            if v > 0 then
+                draw_block(i, j, v)
             end
         end
     end
@@ -448,12 +459,12 @@ function _draw()
         local j1 = piece.j
         for i=1, #piece_blocks do
             local block = piece_blocks[i]
-            draw_block(i1 + block[1], j1 + block[2], colors.green)
+            draw_block(i1 + block[1], j1 + block[2], piece.piece_index)
         end
     end
     clip()
 
-    cursor(80, 16)
+    cursor(64 + board_offset, board_offset)
     color(colors.white)
     print("level: " .. level)
     print("lines: " .. lines)
@@ -468,3 +479,10 @@ function _draw()
         print(debug_message, 0, 122, colors.white)
     end
 end
+__gfx__
+dddddd00aaaaaa0011111100aaaaaa0099999900aaaaa900cccccd00000000000000000000000000000000000000000000000000000000000000000000000000
+dcccc100aaaaaa001cccc100a999940099999900aaaa9900ccccdd00000000000000000000000000000000000000000000000000000000000000000000000000
+dcccc100aa99aa001cddd100a999940099449900aaa99900cccddd00000000000000000000000000000000000000000000000000000000000000000000000000
+dcccc100aa99aa001cddd100a999940099449900aa449900cc11dd00000000000000000000000000000000000000000000000000000000000000000000000000
+dcccc100a4444a001cddd100a999940092222900a4444900c1111d00000000000000000000000000000000000000000000000000000000000000000000000000
+d11111004444440011111100a4444400222222004444440011111100000000000000000000000000000000000000000000000000000000000000000000000000
