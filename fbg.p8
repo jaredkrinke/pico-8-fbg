@@ -137,22 +137,38 @@ function board_reset()
     end
 end
 
-function board_remove_row(j0)
-    for j=j0, board_height do
+function board_remove_row(j)
+    board[j].deleted = true
+end
+
+function board_expunge_rows()
+    local destination = 0
+    for j=1, board_height do
+        local deleted = board[j].deleted
+        if deleted then
+            board[j].deleted = false
+        else
+            destination = destination + 1
+        end
+
+        if not deleted then
+            for i=1, board_width do
+                board[destination][i] = board[j][i]
+            end
+        end
+    end
+
+    for j=destination + 1, board_height do
         for i=1, board_width do
-            local v = 0
-            if j < board_height then v = board[j + 1][i] end
-            board[j][i] = v
+            board[j][i] = 0
         end
     end
 end
 
 function board_clean()
     local cleared = 0
-    local top = 0
-    local j = 1
 
-    while j + cleared <= board_height do
+    for j=1, board_height do
         local completed = true
         for i=1, board_width do
             if not board_occupied(i, j) then
@@ -163,14 +179,11 @@ function board_clean()
 
         if completed then
             board_remove_row(j)
-            top = j + cleared
             cleared = cleared + 1
-        else
-            j = j + 1
         end
     end
 
-    return cleared, top
+    return cleared
 end
 
 function game_score_update(cleared)
@@ -374,6 +387,7 @@ function _update60()
             timer_next_piece = timer_next_piece - 1
         else
             if piece.index == 0 then
+                board_expunge_rows()
                 piece_advance()
                 if piece.index > 0 and not piece_validate() then
                     game_end()
@@ -499,6 +513,22 @@ function draw_box_number(x, y, label, number, digits)
     print(number_string, x1 + (x2 - x1) / 2 - 2 * #number_string + 1, y + 6, colors.white)
 end
 
+local palette_fades = {
+    { colors.yellow, colors.orange, colors.brown, colors.dark_purple },
+    { colors.blue, colors.indigo, colors.dark_blue },
+}
+
+function fade_palette(offset)
+    for i=1, #palette_fades do
+        local fade = palette_fades[i]
+        for j=1, #fade do
+            local index = j + offset
+            local c = (index <= #fade) and fade[index] or colors.black
+            pal(fade[j], c)
+        end
+    end
+end
+
 function _draw()
     cls(colors.indigo)
 
@@ -512,11 +542,32 @@ function _draw()
     draw_box(board_offset, board_offset, x2, y2)
     clip(board_offset, board_offset, block_size * board_width, block_size * board_height)
     for j=1, board_height do
-        for i=1, board_width do
-            local v = board[j][i]
-            if v > 0 then
-                draw_block(i, j, v)
+        local deleted = board[j].deleted
+        local draw = true
+        if deleted then
+            local t = 1 - (timer_next_piece / (next_piece_delay + clear_delay))
+            if t <= 0.1 then
+                fade_palette(1)
+            elseif t <= 0.3 then
+                fade_palette(2)
+            elseif t <= 0.5 then
+                fade_palette(3)
+            else
+                draw = false
             end
+        end
+
+        if draw then
+            for i=1, board_width do
+                local v = board[j][i]
+                if v > 0 then
+                    draw_block(i, j, v)
+                end
+            end
+        end
+
+        if deleted then
+            pal()
         end
     end
 
