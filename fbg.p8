@@ -48,6 +48,8 @@ local sounds = {
     move = 1,
     land = 2,
     clear = 3,
+    quad = 4,
+    lose = 5,
 }
 
 -- game data
@@ -210,6 +212,7 @@ function game_score_update(cleared)
 end
 
 function game_end()
+    sfx(sounds.lose)
     game_paused = true
     game_over = true
 end
@@ -293,11 +296,15 @@ function piece_try_move_down()
 end
 
 function piece_move_left()
-    piece_try_move(-1, 0)
+    if piece_try_move(-1, 0) then
+        sfx(sounds.move)
+    end
 end
 
 function piece_move_right()
-    piece_try_move(1, 0)
+    if piece_try_move(1, 0) then
+        sfx(sounds.move)
+    end
 end
 
 function piece_complete()
@@ -320,6 +327,7 @@ function piece_move_down()
             end
         else
             piece_complete()
+            sfx(sounds.land)
 
             local cleared = board_clean()
             game_score_update(cleared)
@@ -331,6 +339,11 @@ function piece_move_down()
 
             if cleared > 0 then
                 timer_next_piece = timer_next_piece + clear_delay
+                if cleared == 4 then
+                    sfx(sounds.quad)
+                else
+                    sfx(sounds.clear)
+                end
             end
         end
     end
@@ -346,11 +359,15 @@ function piece_try_rotate(offset)
 end
 
 function piece_rotate_cw()
-    return piece_try_rotate(-1)
+    if piece_try_rotate(-1) then
+        sfx(sounds.rotate)
+    end
 end
 
 function piece_rotate_ccw()
-    return piece_try_rotate(1)
+    if piece_try_rotate(1) then
+        sfx(sounds.rotate)
+    end
 end
 
 function get_drop_period()
@@ -648,4 +665,6 @@ __sfx__
 010500002135500305213500030500305003050030500305003050030500305003050030500305003050030500305003050030500305003050030500305003050030500305003050030500305003050030500305
 010200002d34000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 010500000234500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005000050000500005
-000200001d3602136024360293601f3602336026360000001e3602236025360000001d3502135024350000001c3502035023350000001b3401f34022340000001a3301e3302133000000193201d3202032000000
+010200001d3602136024360293601f3602336026360000001e3602236025360000001d3502135024350000001c3502035023350000001b3401f34022340000001a3301e3302133000000193201d3202032000000
+0104000021362000022836200002213520000228352000022d3420000228342000022d3320000228332000022d3220000228322000022d312000022d312000020000200002000020000200002000000000000000
+015a00000065500605006050060500605006050060500605006050060500605006050060500605006050060500605006050060500605006050060500605006050060500605006050060500605000050000500005
