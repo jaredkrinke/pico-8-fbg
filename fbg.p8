@@ -52,6 +52,63 @@ local sounds = {
     lose = 5,
 }
 
+-- utilities
+big_int = {}
+big_int_mt = {
+    __index = big_int,
+    __concat = function (a, b)
+        if type(a) == "string" and getmetatable(b) == big_int_mt then
+            return a .. b:to_string()
+        end
+    end,
+}
+
+function big_int.create()
+    local instance = {
+        digits = {},
+    }
+    setmetatable(instance, big_int_mt)
+
+    return instance
+end
+
+function big_int:reset()
+    local digits = self.digits
+    local count = #digits
+    for i=1, count do
+        digits[i] = nil
+    end
+end
+
+function big_int:add(x)
+    local digits = self.digits
+    local i = 1
+    local carry = 0
+    while x > 0 or carry > 0 do
+        local sum = carry + (digits[i] or 0) + (x % 10)
+        digits[i] = sum % 10
+        carry = flr(sum / 10)
+        x = flr(x / 10)
+        i = i + 1
+    end
+end
+
+function big_int:to_string()
+    local digits = self.digits
+    local count = #digits
+
+    if count > 0 then
+        local s = ""
+        for i=count, 1, -1 do
+            s = s .. digits[i]
+        end
+    
+        return s
+    end
+
+    return "0"
+end
+
 -- game data
 local board_width = 10
 local board_height = 20
@@ -108,7 +165,7 @@ local debug_message = nil
 
 -- game state
 local board = {}
-local score = 0
+local score = big_int.create()
 local lines = 0
 local level = 0
 local game_over = false
@@ -197,18 +254,21 @@ function board_clean()
 end
 
 function game_score_update(cleared)
-    local fast_drop_points = 0
+    local points = 0
     if fast_drop then
-        fast_drop_points = fast_drop_row - piece.j
-        score = score + fast_drop_points
+        points = fast_drop_row - piece.j
     end
 
     if cleared >= 1 and cleared <= #cleared_to_score then
-        score = score + cleared_to_score[cleared] * (level + 1)
+        points = points + cleared_to_score[cleared] * (level + 1)
         lines = lines + cleared
         if level < flr(lines / 10) then
             level = level + 1
         end
+    end
+
+    if points > 0 then
+        score:add(points)
     end
 end
 
@@ -384,7 +444,7 @@ function reset()
     piece.index = 0
     piece.next_index = 0
     piece_advance()
-    score = 0
+    score:reset()
     lines = 0
     level = 0
     game_over = false
