@@ -1,6 +1,8 @@
 pico-8 cartridge // http://www.pico-8.com
-version 16
+version 18
 __lua__
+-- Falling Block Game
+-- v0.1
 
 -- constants
 colors = {
@@ -272,10 +274,68 @@ function game_score_update(cleared)
     end
 end
 
+function set_gpio(index, byte)
+    poke(0x5f80 + index, byte)
+end
+
+function get_gpio(index)
+    return peek(0x5f80 + index)
+end
+
+local gpio_score_base = 1
+local gpio_btns = 0
+local gpio_replay = 20
+local gpio_replay_buttons = 21
+
+function notify_score()
+    -- TODO: Enforce max score of 999999
+    -- TODO: This is only for testing high scores!
+    local digits = {}
+    for i = 1, 6, 1 do
+        if i <= #score.digits then
+            digits[i] = score.digits[i]
+        else
+            digits[i] = 0
+        end
+    end
+
+    for i = 1, #digits, 1 do
+        set_gpio(i - 1 + gpio_score_base, digits[i])
+    end
+end
+
+function notify_btns(up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
+    local byte = 0
+    if up_pressed then byte += 1 end
+    if down_pressed then byte += 2 end
+    if left_pressed then byte += 4 end
+    if right_pressed then byte += 8 end
+    if cw_pressed then byte += 16 end
+    if ccw_pressed then byte += 32 end
+    set_gpio(gpio_btns, byte)
+end
+
+function notify_replay()
+    set_gpio(gpio_replay, 1)
+end
+
+function notify_read_buttons()
+    local byte = get_gpio(gpio_replay_buttons)
+    local up_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
+    local down_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
+    local left_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
+    local right_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
+    local cw_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
+    local ccw_pressed = (byte % 2) ~= 0
+
+    return up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed
+end
+
 function game_end()
     sfx(sounds.lose)
     game_paused = true
     game_over = true
+    notify_score()
 end
 
 function piece_hide()
@@ -377,13 +437,13 @@ function piece_complete()
     end)
 end
 
-function piece_move_down()
+function piece_move_down(left_pressed, right_pressed)
     if piece.index > 0 then
         if piece_try_move_down() then
             -- check for slide underneath
-            if btn(buttons.left) and not piece_test_move(-1, 1) and piece_test_move(-1, 0) then
+            if left_pressed and not piece_test_move(-1, 1) and piece_test_move(-1, 0) then
                 piece_move_left()
-            elseif btn(buttons.right) and not piece_test_move(1, 1) and piece_test_move(1, 0) then
+            elseif right_pressed and not piece_test_move(1, 1) and piece_test_move(1, 0) then
                 piece_move_right()
             end
         else
@@ -467,12 +527,17 @@ function _init()
     reset()
 end
 
+local replay = false
 function _update60()
     if game_paused then
         if not game_started and btn() ~= 0 then
             game_started = true
             game_paused = false
             music(0)
+
+            if replay then
+                notify_replay()
+            end
         end
     else
         if piece.index == 0 and timer_next_piece > 0 then
@@ -489,11 +554,26 @@ function _update60()
             -- game may be paused due to loss
             if not game_paused then
                 -- input
-                local left_pressed = btn(buttons.left)
-                local right_pressed = btn(buttons.right)
-                local down_pressed = btn(buttons.down)
-                local cw_pressed = btn(buttons.z)
-                local ccw_pressed = btn(buttons.x)
+                local up_pressed
+                local left_pressed
+                local right_pressed
+                local down_pressed
+                local cw_pressed
+                local ccw_pressed
+
+                if replay then
+                    up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed = notify_read_buttons()
+                    notify_replay()
+                else
+                    left_pressed = btn(buttons.left)
+                    right_pressed = btn(buttons.right)
+                    down_pressed = btn(buttons.down)
+                    cw_pressed = btn(buttons.z)
+                    ccw_pressed = btn(buttons.x)
+
+                    -- TODO: Only for testing recording right now
+                    notify_btns(0, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
+                end
 
                 if left_pressed and not input_last_left then
                     piece_move_left()
@@ -539,7 +619,7 @@ function _update60()
 
                 timer_drop = timer_drop + 1
                 while timer_drop >= drop_period do
-                    piece_move_down()
+                    piece_move_down(left_pressed, right_pressed)
                     timer_drop = timer_drop - drop_period
                     first_drop = false
                 end
@@ -729,6 +809,136 @@ d11111004444440011111100a444440022222200444444001111110000000000dddddd07770d00d0
 0000000000000000000000000000000000000000000000000000000000000000dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 0000000000000000000000000000000000000000000000000000000000000000dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 0000000000000000000000000000000000000000000000000000000000000000dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+__label__
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd66666666666666666666666666666666666666666666666666666666666666ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006dddddd000dddddd0d0dddddddddddddddd0000dd0ddddddddddd0dddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddd07770d00d070700ddddddddddddd077770070ddddddddd070ddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddd0700d077007070700d0ddd00ddd5070007070d00ddd0000700dddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddd07000700707070007070d0770d560777700700770d077707070ddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddd077700777070707077070700706a0700070707007070000770dddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddd07000700707070707007070070aa07000707070070700007070ddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddd070d0777707070707007007770aa0777700700770d0777070070dddddd
+ddd60000000000000000000000000000000000000000000000000000000000006dddddd0ddd0000d0d0d0d0dd0dd0070aaa0000dd0dd00ddd000d0dd0ddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006dddddddddddddddddddddddddd0770994444465dddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddd560099944446a65ddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006dddddddddddddddddddddddd56aaa6990006aaa65dddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddd56aaaaa607770aa006500000dd00dddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006dddddddddddddddddddddd56aaaaaa07000aa077007707700770ddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddd56999944407090007007070707070070dddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006dddddddddddddddddddddd569994440700770077707070707770ddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddd56994440700070700707070707000ddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006dddddddddddddddddddddddd56944650777007777070707007770dddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddd56465dd000560000a0a0a00d000ddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006dddddddddddddddddddddddddd565ddddddd5699994444465dddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddddd5ddddddddd56999444465ddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006dddddddddddddddddddddddddddddddddddddd569944465dddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddddddddddddddddd5694465ddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006dddddddddddddddddddddddddddddddddddddddd56465dddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddddddddddddddddddd565ddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006dddddddddddddddddddddddddddddddddddddddddd5dddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000001111116dd66666666666666666666666dddddddddddd66666666666666666666666ddd
+ddd60000000000000000000000000000000000000000000000000000001cccc16dd60000000000000000000006dddddddddddd60000000000000000000006ddd
+ddd60000000000000000000000000000000000000000000000000000001cddd16dd60700077707070777070006dddddddddddd60700077707700777007706ddd
+ddd60000000000000000000000000000000000000000000000000000001cddd16dd60700070007070700070006dddddddddddd60700007007070700070006ddd
+ddd60000000000000000000000000000000000000000000000000000001cddd16dd60700077007070770070006dddddddddddd60700007007070770077706ddd
+ddd60000000000000000000000000000000000000000000000000000001111116dd60700070007770700070006dddddddddddd60700007007070700000706ddd
+ddd60000000000000000000000000000000000000000000000000000001111116dd60777077700700777077706dddddddddddd60777077707070777077006ddd
+ddd60000000000000000000000000000000000000000000000000000001cccc16dd60000000000000000000006dddddddddddd60000000000000000000006ddd
+ddd60000000000000000000000000000000000000000000000000000001cddd16dd60000000007770000000006dddddddddddd60000000007770000000006ddd
+ddd60000000000000000000000000000000000000000000000000000001cddd16dd60000000007070000000006dddddddddddd60000000007070000000006ddd
+ddd60000000000000000000000000000000000000000000000000000001cddd16dd60000000007070000000006dddddddddddd60000000007070000000006ddd
+ddd60000000000000000000000000000000000000000000000000000001111116dd60000000007070000000006dddddddddddd60000000007070000000006ddd
+ddd60000000000000000000000000000000000000000000000000000001111116dd60000000007770000000006dddddddddddd60000000007770000000006ddd
+ddd60000000000000000000000000000000000000000000000000000001cccc16dd60000000000000000000006dddddddddddd60000000000000000000006ddd
+ddd60000000000000000000000000000000000000000000000000000001cddd16dd66666666666666666666666dddddddddddd66666666666666666666666ddd
+ddd60000000000000000000000000000000000000000000000000000001cddd16ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000001cddd16ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000001111116ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000001111116ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000001cccc16ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000001cddd16ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000001cddd16ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000001cddd16ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000001111116ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddd6666666666666666666666666666666ddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddd6000000000000000000000000000006ddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddd6000000770077007707770777000006ddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddd6000007000700070707070700000006ddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddd6000007770700070707700770000006ddddddddddddddddd
+ddd60000000000000000000000000000000000000000000000000000000000006ddddddddddddddd6000000070700070707070700000006ddddddddddddddddd
+ddd6111111000000000000000000aaaaa9aaaaa90000000000000000000000006ddddddddddddddd6000007700077077007070777000006ddddddddddddddddd
+ddd61cccc1000000000000000000aaaa99aaaa990000000000000000000000006ddddddddddddddd6000000000000000000000000000006ddddddddddddddddd
+ddd61cddd1000000000000000000aaa999aaa9990000000000000000000000006ddddddddddddddd6000000000770077707770000000006ddddddddddddddddd
+ddd61cddd1000000000000000000aa4499aa44990000000000000000000000006ddddddddddddddd6000000000070000700070000000006ddddddddddddddddd
+ddd61cddd1000000000000000000a44449a444490000000000000000000000006ddddddddddddddd6000000000070007700070000000006ddddddddddddddddd
+ddd61111110000000000000000004444444444440000000000000000000000006ddddddddddddddd6000000000070000700070000000006ddddddddddddddddd
+ddd6111111000000000000000000aaaaa9aaaaa90000000000000000000000006ddddddddddddddd6000000000777077700070000000006ddddddddddddddddd
+ddd61cccc1000000000000000000aaaa99aaaa990000000000000000000000006ddddddddddddddd6000000000000000000000000000006ddddddddddddddddd
+ddd61cddd1000000000000000000aaa999aaa9990000000000000000000000006ddddddddddddddd6666666666666666666666666666666ddddddddddddddddd
+ddd61cddd1000000000000000000aa4499aa44990000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd61cddd1000000000000000000a44449a444490000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd61111110000000000000000004444444444440000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd6111111000000000000000000dddddddddddd0000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd61cccc1000000000000000000dcccc1dcccc10000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd61cddd1000000000000000000dcccc1dcccc10000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd61cddd1000000000000000000dcccc1dcccc10000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd61cddd1000000000000000000dcccc1dcccc10000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd6111111000000000000000000d11111d111110000000000000000000000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd6111111dddddddddddd000000dddddddddddd0000000000000000000000006ddddddddddddddddd6666666666666666666666666666dddddddddddddddddd
+ddd61cccc1dcccc1dcccc1000000dcccc1dcccc10000000000000000000000006ddddddddddddddddd6000000000000000000000000006dddddddddddddddddd
+ddd61cddd1dcccc1dcccc1000000dcccc1dcccc10000000000000000000000006ddddddddddddddddd6000007700777070707770000006dddddddddddddddddd
+ddd61cddd1dcccc1dcccc1000000dcccc1dcccc10000000000000000000000006ddddddddddddddddd6000007070700070700700000006dddddddddddddddddd
+ddd61cddd1dcccc1dcccc1000000dcccc1dcccc10000000000000000000000006ddddddddddddddddd6000007070770007000700000006dddddddddddddddddd
+ddd6111111d11111d11111000000d11111d111110000000000000000000000006ddddddddddddddddd6000007070700070700700000006dddddddddddddddddd
+ddd6111111dddddddddddd000000dddddddddddd0000009999990000000000006ddddddddddddddddd6000007070777070700700000006dddddddddddddddddd
+ddd61cccc1dcccc1dcccc1000000dcccc1dcccc10000009999990000000000006ddddddddddddddddd6000000000000000000000000006dddddddddddddddddd
+ddd61cddd1dcccc1dcccc1000000dcccc1dcccc10000009944990000000000006ddddddddddddddddd6000000000000000000000000006dddddddddddddddddd
+ddd61cddd1dcccc1dcccc1000000dcccc1dcccc10000009944990000000000006ddddddddddddddddd6000000000000000000000000006dddddddddddddddddd
+ddd61cddd1dcccc1dcccc1000000dcccc1dcccc10000009222290000000000006ddddddddddddddddd60000000aaaaa9aaaaa900000006dddddddddddddddddd
+ddd6111111d11111d11111000000d11111d111110000002222220000000000006ddddddddddddddddd60000000aaaa99aaaa9900000006dddddddddddddddddd
+ddd6111111ddddddddddddcccccdddddddddddddaaaaaa9999999999990000006ddddddddddddddddd60000000aaa999aaa99900000006dddddddddddddddddd
+ddd61cccc1dcccc1dcccc1ccccdddcccc1dcccc1aaaaaa9999999999990000006ddddddddddddddddd60000000aa4499aa449900000006dddddddddddddddddd
+ddd61cddd1dcccc1dcccc1cccddddcccc1dcccc1aa99aa9944999944990000006ddddddddddddddddd60000000a44449a4444900000006dddddddddddddddddd
+ddd61cddd1dcccc1dcccc1cc11dddcccc1dcccc1aa99aa9944999944990000006ddddddddddddddddd6000000044444444444400000006dddddddddddddddddd
+ddd61cddd1dcccc1dcccc1c1111ddcccc1dcccc1a4444a9222299222290000006ddddddddddddddddd60000000aaaaa9aaaaa900000006dddddddddddddddddd
+ddd6111111d11111d11111111111d11111d111114444442222222222220000006ddddddddddddddddd60000000aaaa99aaaa9900000006dddddddddddddddddd
+ddd6111111ddddddddddddcccccdcccccdaaaaaaaaaaaa9999999999990000006ddddddddddddddddd60000000aaa999aaa99900000006dddddddddddddddddd
+ddd61cccc1dcccc1dcccc1ccccddccccddaaaaaaaaaaaa9999999999990000006ddddddddddddddddd60000000aa4499aa449900000006dddddddddddddddddd
+ddd61cddd1dcccc1dcccc1cccdddcccdddaa99aaaa99aa9944999944990000006ddddddddddddddddd60000000a44449a4444900000006dddddddddddddddddd
+ddd61cddd1dcccc1dcccc1cc11ddcc11ddaa99aaaa99aa9944999944990000006ddddddddddddddddd6000000044444444444400000006dddddddddddddddddd
+ddd61cddd1dcccc1dcccc1c1111dc1111da4444aa4444a9222299222290000006ddddddddddddddddd6000000000000000000000000006dddddddddddddddddd
+ddd6111111d11111d111111111111111114444444444442222222222220000006ddddddddddddddddd6000000000000000000000000006dddddddddddddddddd
+ddd6111111999999999999cccccdaaaaaaaaaaaacccccd9999999999990000006ddddddddddddddddd6000000000000000000000000006dddddddddddddddddd
+ddd61cccc1999999999999ccccdda99994aaaaaaccccdd9999999999990000006ddddddddddddddddd6666666666666666666666666666dddddddddddddddddd
+ddd61cddd1994499994499cccddda99994aa99aacccddd9944999944990000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd61cddd1994499994499cc11dda99994aa99aacc11dd9944999944990000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd61cddd1922229922229c1111da99994a4444ac1111d9222299222290000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd6111111222222222222111111a444444444441111112222222222220000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd6999999999999aaaaaaaaaaaaaaaaaacccccdcccccdcccccd9999990000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd6999999999999a99994a99994a99994ccccddccccddccccdd9999990000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd6994499994499a99994a99994a99994cccdddcccdddcccddd9944990000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd6994499994499a99994a99994a99994cc11ddcc11ddcc11dd9944990000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd6922229922229a99994a99994a99994c1111dc1111dc1111d9222290000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd6222222222222a44444a44444a444441111111111111111112222220000006ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+ddd66666666666666666666666666666666666666666666666666666666666666ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+
 __sfx__
 010500002135500305213500030500305003050030500305003050030500305003050030500305003050030500305003050030500305003050030500305003050030500305003050030500305003050030500305
 010200002d34000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
