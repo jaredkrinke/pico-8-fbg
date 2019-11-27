@@ -165,9 +165,149 @@ local pieces = {
 local debug = true
 local debug_message = nil
 
+-- random number generator
+xorwow = {
+    new = function ()
+        local function random_uint32()
+            return bor(flr(rnd(256)),
+                bor(shl(flr(rnd(256)), 8),
+                bor(lshr(flr(rnd(256)), 8),
+                bor(lshr(flr(rnd(256)), 16)))))
+        end
+        
+        return xorwow.new_with_seed(random_uint32(), random_uint32(), random_uint32(), random_uint32())
+    end,
+
+    new_with_seed = function (a, b, c, d)
+        local counter = 0
+
+        return {
+            a = a,
+            b = b,
+            c = c,
+            d = d,
+
+            next = function()
+                local t = d
+
+                d = c
+                c = b
+                b = a
+
+                t = bxor(t, lshr(t, 2))
+                t = bxor(t, shl(t, 1))
+                t = bxor(t, bxor(a, shl(a, 4)))
+                a = t
+
+                counter = counter + 0x0005.87c5
+                return t + counter
+            end,
+
+            random_byte = function(self, max_exclusive)
+                -- Throw out values that wrap around to avoid bias
+                while true do
+                    local number = self:next()
+                    local byte = band(0xff, flr(bxor(number, bxor(lshr(number, 8), bxor(shl(number, 8), bxor(shl(number, 16)))))))
+                    if byte + (256 % max_exclusive) < 256 then
+                        return byte % max_exclusive
+                    end
+                end
+            end,
+        }
+    end,
+}
+
+local prng = xorwow.new()
+
+-- communication
+function set_gpio(index, byte)
+    poke(0x5f80 + index, byte)
+end
+
+function get_gpio(index)
+    return peek(0x5f80 + index)
+end
+
+local gpio_score_base = 1
+local gpio_btns = 0
+local gpio_replay = 10
+local gpio_replay_buttons = 11
+local gpio_seed_base = 20
+local gpio_frame = 50
+
+function notify_score()
+    -- TODO: Enforce max score of 999999
+    -- TODO: This is only for testing high scores!
+    local digits = {}
+    for i = 1, 6, 1 do
+        if i <= #score.digits then
+            digits[i] = score.digits[i]
+        else
+            digits[i] = 0
+        end
+    end
+
+    for i = 1, #digits, 1 do
+        set_gpio(i - 1 + gpio_score_base, digits[i])
+    end
+end
+
+function notify_btns(up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
+    local byte = 0
+    if up_pressed then byte += 1 end
+    if down_pressed then byte += 2 end
+    if left_pressed then byte += 4 end
+    if right_pressed then byte += 8 end
+    if cw_pressed then byte += 16 end
+    if ccw_pressed then byte += 32 end
+    set_gpio(gpio_btns, byte)
+end
+
+function notify_replay()
+    set_gpio(gpio_replay, 1)
+    debug_frame_local = (debug_frame_local + 1) % 256
+end
+
+function notify_seed()
+    local seeds = { prng.a, prng.b, prng.c, prng.d }
+    for i = 1, #seeds, 1 do
+        local seed = seeds[i]
+        set_gpio(gpio_seed_base + 4 * (i - 1),        band(0xff, shl(seed, 16)))
+        set_gpio(gpio_seed_base + 4 * (i - 1) + 1,    band(0xff, shl(seed, 8)))
+        set_gpio(gpio_seed_base + 4 * (i - 1) + 2,    band(0xff, seed))
+        set_gpio(gpio_seed_base + 4 * (i - 1) + 3,    band(0xff, lshr(seed, 8)))
+    end
+end
+
+function notify_read_seeds()
+    local seeds = {}
+    for i = 1, 4, 1 do
+        local seed = 0
+        seed = bor(seed, lshr(get_gpio(gpio_seed_base + 4 * (i - 1)), 16))
+        seed = bor(seed, lshr(get_gpio(gpio_seed_base + 4 * (i - 1) + 1), 8))
+        seed = bor(seed, get_gpio(gpio_seed_base + 4 * (i - 1) + 2))
+        seed = bor(seed, shl(get_gpio(gpio_seed_base + 4 * (i - 1) + 3), 8))
+        seeds[i] = seed
+    end
+    return seeds
+end
+
+function notify_read_buttons()
+    local byte = get_gpio(gpio_replay_buttons)
+    local up_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
+    local down_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
+    local left_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
+    local right_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
+    local cw_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
+    local ccw_pressed = (byte % 2) ~= 0
+
+    return up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed
+end
+
 -- game state
+score = big_int.create()
+
 local board = {}
-local score = big_int.create()
 local lines = 0
 local level = 0
 local game_over = false
@@ -198,6 +338,9 @@ local piece = {
 }
 
 -- game logic
+local replay = true
+local replay_started = false
+
 function board_reset()
     for j=1, board_height do
         for i=1, board_width do
@@ -274,68 +417,14 @@ function game_score_update(cleared)
     end
 end
 
-function set_gpio(index, byte)
-    poke(0x5f80 + index, byte)
-end
-
-function get_gpio(index)
-    return peek(0x5f80 + index)
-end
-
-local gpio_score_base = 1
-local gpio_btns = 0
-local gpio_replay = 20
-local gpio_replay_buttons = 21
-
-function notify_score()
-    -- TODO: Enforce max score of 999999
-    -- TODO: This is only for testing high scores!
-    local digits = {}
-    for i = 1, 6, 1 do
-        if i <= #score.digits then
-            digits[i] = score.digits[i]
-        else
-            digits[i] = 0
-        end
-    end
-
-    for i = 1, #digits, 1 do
-        set_gpio(i - 1 + gpio_score_base, digits[i])
-    end
-end
-
-function notify_btns(up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
-    local byte = 0
-    if up_pressed then byte += 1 end
-    if down_pressed then byte += 2 end
-    if left_pressed then byte += 4 end
-    if right_pressed then byte += 8 end
-    if cw_pressed then byte += 16 end
-    if ccw_pressed then byte += 32 end
-    set_gpio(gpio_btns, byte)
-end
-
-function notify_replay()
-    set_gpio(gpio_replay, 1)
-end
-
-function notify_read_buttons()
-    local byte = get_gpio(gpio_replay_buttons)
-    local up_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
-    local down_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
-    local left_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
-    local right_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
-    local cw_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
-    local ccw_pressed = (byte % 2) ~= 0
-
-    return up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed
-end
-
 function game_end()
     sfx(sounds.lose)
     game_paused = true
     game_over = true
-    notify_score()
+
+    if not replay then
+        notify_score()
+    end
 end
 
 function piece_hide()
@@ -343,7 +432,7 @@ function piece_hide()
 end
 
 function piece_choose_next()
-    piece.next_index = flr(rnd(#pieces)) + 1
+    piece.next_index = prng:random_byte(#pieces) + 1
 end
 
 function piece_advance()
@@ -503,6 +592,11 @@ function reset()
     board_reset()
     piece.index = 0
     piece.next_index = 0
+
+    if not replay then
+        notify_seed()
+    end
+
     piece_advance()
     score:reset()
     lines = 0
@@ -527,8 +621,10 @@ function _init()
     reset()
 end
 
-local replay = false
+debug_frame_local = 0
+
 function _update60()
+        debug_message = "" .. debug_frame_local .. " " .. get_gpio(gpio_frame)
     if game_paused then
         if not game_started and btn() ~= 0 then
             game_started = true
@@ -540,6 +636,16 @@ function _update60()
             end
         end
     else
+        if replay and not replay_started then
+            replay_started = true
+
+            local seeds = notify_read_seeds()
+            prng = xorwow.new_with_seed(seeds[1], seeds[2], seeds[3], seeds[4])
+            piece_advance()
+            piece_advance()
+        end
+
+
         if piece.index == 0 and timer_next_piece > 0 then
             timer_next_piece = timer_next_piece - 1
         else
