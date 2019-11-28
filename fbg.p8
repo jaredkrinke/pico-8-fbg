@@ -365,7 +365,6 @@ function comm_replay_frame()
         local right_pressed = (band(0x08, byte) ~= 0)
         local cw_pressed = (band(0x10, byte) ~= 0)
         local ccw_pressed = (band(0x20, byte) ~= 0)
-        debug_message = "" .. byte
 
         return up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed
     end
@@ -407,7 +406,7 @@ local piece = {
 }
 
 -- game logic
-local replay = true
+local replay = false
 
 function board_reset()
     for j=1, board_height do

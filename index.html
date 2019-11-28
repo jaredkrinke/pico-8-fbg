@@ -612,7 +612,7 @@
     var tmp = true;
 	messageHandlers[messageTypes.replayFrame] = function (bytes) {
         if (replayIndex < replay.length) {
-            responses.push({ type: messageTypes.replayFrame, body: [ replay.charCodeAt(replayIndex++) ] });
+			responses.push({ type: messageTypes.replayFrame, body: [ replay.charCodeAt(replayIndex++) ] });
         } else if (tmp) {
             alert("Done");
             tmp = false;
@@ -634,7 +634,8 @@
 	var writeId = 0;
 	function sendMessages(messages) {
 		var writeIndex = gpioBase.host;
-		gpio.setSilent(writeIndex++, ++writeId);
+		writeId = (writeId + 1) % 256
+		gpio.setSilent(writeIndex++, writeId);
 		gpio.setSilent(writeIndex++, messages.length);
 		for (var i = 0; i < messages.length; i++) {
 			var message = messages[i];
