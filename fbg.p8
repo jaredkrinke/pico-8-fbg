@@ -220,39 +220,99 @@ xorwow = {
 local prng = xorwow.new()
 
 -- communication
-function set_gpio(index, byte)
-    poke(0x5f80 + index, byte)
-end
+local comm_gpio_base = {
+    client = 0,
+    host = 64,
+}
 
-function get_gpio(index)
-    return peek(0x5f80 + index)
-end
-
-local gpio_score_base = 1
-local gpio_btns = 0
-local gpio_replay = 10
-local gpio_replay_buttons = 11
-local gpio_seed_base = 20
-local gpio_frame = 50
-
-function notify_score()
-    -- TODO: Enforce max score of 999999
-    -- TODO: This is only for testing high scores!
-    local digits = {}
-    for i = 1, 6, 1 do
-        if i <= #score.digits then
-            digits[i] = score.digits[i]
-        else
-            digits[i] = 0
+function comm_set_gpio(index, byteOrBytes)
+    if type(byteOrBytes) == "number" then
+        poke(0x5f80 + index, byteOrBytes)
+    else
+        for i = 1, #byteOrBytes, 1 do
+            poke(0x5f80 + index + i - 1, byteOrBytes[i])
         end
     end
+end
 
-    for i = 1, #digits, 1 do
-        set_gpio(i - 1 + gpio_score_base, digits[i])
+function comm_get_gpio(index, count)
+    if count == nil then
+        return peek(0x5f80 + index)
+    else
+        local bytes = {}
+        for i = 1, count, 1 do
+            bytes[i] = peek(0x5f80 + index + i - 1)
+        end
+        return bytes
     end
 end
 
-function notify_btns(up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
+local comm_payload_read_id = 0
+function comm_read_messages()
+    local index = comm_gpio_base.host
+    local pid = comm_get_gpio(index)
+    local messages = {}
+    if pid ~= comm_payload_read_id then
+        -- todo: check to see if any messages were dropped/ignored?
+        comm_payload_read_id = pid
+
+        local count = comm_get_gpio(index + 1)
+        index = index + 2
+        for i = 1, count, 1 do
+            local size = comm_get_gpio(index)
+            local type = comm_get_gpio(index + 1)
+            messages[#messages + 1] = {
+                type = type,
+                body = comm_get_gpio(index + 2, size),
+            }
+
+            index = index + 2 + size
+        end
+    end
+    return messages
+end
+
+local comm_payload_send_id = 0
+function comm_send_messages(messages)
+    comm_payload_send_id = (comm_payload_send_id + 1) % 256
+    local index = comm_gpio_base.client
+    comm_set_gpio(index, comm_payload_send_id)
+    comm_set_gpio(index + 1, #messages)
+    index = index + 2
+    for i = 1, #messages, 1 do
+        comm_set_gpio(index, #messages[i].body)
+        comm_set_gpio(index + 1, messages[i].type)
+        comm_set_gpio(index + 2, messages[i].body)
+        index = index + 2 + #messages[i]
+    end
+end
+
+function comm_send_message(type, body)
+    comm_send_messages({ { type = type, body = body } })
+end
+
+local comm_message_types = {
+    start_record = 1,
+    start_replay = 2,
+    record_frame = 3,
+    end_record = 4,
+    replay_frame = 5,
+}
+
+function comm_start_record(seeds)
+    local body = {}
+    for i = 1, #seeds, 1 do
+        local seed = seeds[i]
+        body[#body + 1] = band(0xff, shl(seed, 16))
+        body[#body + 1] = band(0xff, shl(seed, 8))
+        body[#body + 1] = band(0xff, seed)
+        body[#body + 1] = band(0xff, lshr(seed, 8))
+    end
+
+    comm_send_message(comm_message_types.start_record, body)
+end
+
+function comm_record_frame(up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
     local byte = 0
     if up_pressed then byte += 1 end
     if down_pressed then byte += 2 end
@@ -260,48 +320,57 @@ function notify_btns(up_pressed, down_pressed, left_pressed, right_pressed, cw_p
     if right_pressed then byte += 8 end
     if cw_pressed then byte += 16 end
     if ccw_pressed then byte += 32 end
-    set_gpio(gpio_btns, byte)
+
+    comm_send_message(comm_message_types.record_frame, {byte})
 end
 
-function notify_replay()
-    set_gpio(gpio_replay, 1)
-    debug_frame_local = (debug_frame_local + 1) % 256
+function comm_end_record(score)
+    -- TODO: Enforce max score of 999999
+    -- TODO: This is only for testing high scores!
+    local digits = score.digits
+    comm_send_message(comm_message_types.end_record, { digits[1], digits[2], digits[3], digits[4], digits[5], digits[6] })
 end
 
-function notify_seed()
-    local seeds = { prng.a, prng.b, prng.c, prng.d }
-    for i = 1, #seeds, 1 do
-        local seed = seeds[i]
-        set_gpio(gpio_seed_base + 4 * (i - 1),        band(0xff, shl(seed, 16)))
-        set_gpio(gpio_seed_base + 4 * (i - 1) + 1,    band(0xff, shl(seed, 8)))
-        set_gpio(gpio_seed_base + 4 * (i - 1) + 2,    band(0xff, seed))
-        set_gpio(gpio_seed_base + 4 * (i - 1) + 3,    band(0xff, lshr(seed, 8)))
+function comm_start_replay()
+    comm_send_message(comm_message_types.start_replay, {})
+
+    local responses = comm_read_messages()
+    if #responses > 0 then
+        local bytes = responses[1].body
+        local seeds = {}
+        for i = 1, 4, 1 do
+            local seed = 0
+            seed = bor(seed, lshr(bytes[4 * (i - 1) + 1], 16))
+            seed = bor(seed, lshr(bytes[4 * (i - 1) + 2], 8))
+            seed = bor(seed, bytes[4 * (i - 1) + 3])
+            seed = bor(seed, shl(bytes[4 * (i - 1) + 4], 8))
+            seeds[i] = seed
+        end
+        
+        prng = xorwow.new_with_seed(seeds[1], seeds[2], seeds[3], seeds[4])
+        piece_advance()
+        piece_advance()
     end
 end
 
-function notify_read_seeds()
-    local seeds = {}
-    for i = 1, 4, 1 do
-        local seed = 0
-        seed = bor(seed, lshr(get_gpio(gpio_seed_base + 4 * (i - 1)), 16))
-        seed = bor(seed, lshr(get_gpio(gpio_seed_base + 4 * (i - 1) + 1), 8))
-        seed = bor(seed, get_gpio(gpio_seed_base + 4 * (i - 1) + 2))
-        seed = bor(seed, shl(get_gpio(gpio_seed_base + 4 * (i - 1) + 3), 8))
-        seeds[i] = seed
+function comm_replay_frame()
+    comm_send_message(comm_message_types.replay_frame, {})
+
+    local responses = comm_read_messages()
+    if #responses > 0 then
+        local byte = responses[1].body[1]
+        local up_pressed = (band(0x01, byte) ~= 0)
+        local down_pressed = (band(0x02, byte) ~= 0)
+        local left_pressed = (band(0x04, byte) ~= 0)
+        local right_pressed = (band(0x08, byte) ~= 0)
+        local cw_pressed = (band(0x10, byte) ~= 0)
+        local ccw_pressed = (band(0x20, byte) ~= 0)
+        debug_message = "" .. byte
+
+        return up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed
     end
-    return seeds
-end
 
-function notify_read_buttons()
-    local byte = get_gpio(gpio_replay_buttons)
-    local up_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
-    local down_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
-    local left_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
-    local right_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
-    local cw_pressed = (byte % 2) ~= 0; byte = flr(byte / 2)
-    local ccw_pressed = (byte % 2) ~= 0
-
-    return up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed
+    return false, false, false, false, false, false
 end
 
 -- game state
@@ -339,7 +408,6 @@ local piece = {
 
 -- game logic
 local replay = true
-local replay_started = false
 
 function board_reset()
     for j=1, board_height do
@@ -423,7 +491,7 @@ function game_end()
     game_over = true
 
     if not replay then
-        notify_score()
+        comm_end_record(score)
     end
 end
 
@@ -593,10 +661,6 @@ function reset()
     piece.index = 0
     piece.next_index = 0
 
-    if not replay then
-        notify_seed()
-    end
-
     piece_advance()
     score:reset()
     lines = 0
@@ -621,121 +685,120 @@ function _init()
     reset()
 end
 
-debug_frame_local = 0
-
+local initialized = false
 function _update60()
-        debug_message = "" .. debug_frame_local .. " " .. get_gpio(gpio_frame)
-    if game_paused then
-        if not game_started and btn() ~= 0 then
-            game_started = true
-            game_paused = false
-            music(0)
-
-            if replay then
-                notify_replay()
+    if initialized then
+        -- Already initialized
+        if game_paused then
+            if not game_started and btn() ~= 0 then
+                game_started = true
+                game_paused = false
+                music(0)
             end
-        end
-    else
-        if replay and not replay_started then
-            replay_started = true
-
-            local seeds = notify_read_seeds()
-            prng = xorwow.new_with_seed(seeds[1], seeds[2], seeds[3], seeds[4])
-            piece_advance()
-            piece_advance()
-        end
-
-
-        if piece.index == 0 and timer_next_piece > 0 then
-            timer_next_piece = timer_next_piece - 1
         else
-            if piece.index == 0 then
-                board_expunge_rows()
-                piece_advance()
-                if piece.index > 0 and not piece_validate() then
-                    game_end()
-                end
-            end
-
-            -- game may be paused due to loss
-            if not game_paused then
-                -- input
-                local up_pressed
-                local left_pressed
-                local right_pressed
-                local down_pressed
-                local cw_pressed
-                local ccw_pressed
-
-                if replay then
-                    up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed = notify_read_buttons()
-                    notify_replay()
-                else
-                    left_pressed = btn(buttons.left)
-                    right_pressed = btn(buttons.right)
-                    down_pressed = btn(buttons.down)
-                    cw_pressed = btn(buttons.z)
-                    ccw_pressed = btn(buttons.x)
-
-                    -- TODO: Only for testing recording right now
-                    notify_btns(0, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
-                end
-
-                if left_pressed and not input_last_left then
-                    piece_move_left()
-                    timer_fast_move = -fast_move_initial_delay
-                end
-
-                if right_pressed and not input_last_right then
-                    piece_move_right()
-                    timer_fast_move = -fast_move_initial_delay
-                end
-
-                if left_pressed or right_pressed then
-                    timer_fast_move = timer_fast_move + 1
-                    while timer_fast_move >= fast_move_period do
-                        timer_fast_move = timer_fast_move - fast_move_period
-                        if left_pressed then piece_move_left() end
-                        if right_pressed then piece_move_right() end
+            if piece.index == 0 and timer_next_piece > 0 then
+                timer_next_piece = timer_next_piece - 1
+            else
+                if piece.index == 0 then
+                    board_expunge_rows()
+                    piece_advance()
+                    if piece.index > 0 and not piece_validate() then
+                        game_end()
                     end
                 end
 
-                if down_pressed and not input_last_down then
-                    fast_drop = true
-                    fast_drop_row = piece.j
+                -- game may be paused due to loss
+                if not game_paused then
+                    -- input
+                    local up_pressed
+                    local left_pressed
+                    local right_pressed
+                    local down_pressed
+                    local cw_pressed
+                    local ccw_pressed
 
-                    -- don't drop multiple times
-                    timer_drop = min(min(timer_drop, fast_drop_period), get_drop_period())
-                elseif not down_pressed and input_last_down then
-                    fast_drop = false
+                    if replay then
+                        up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed = comm_replay_frame()
+                    else
+                        left_pressed = btn(buttons.left)
+                        right_pressed = btn(buttons.right)
+                        down_pressed = btn(buttons.down)
+                        cw_pressed = btn(buttons.z)
+                        ccw_pressed = btn(buttons.x)
+
+                        -- TODO: Only for testing recording right now
+                        comm_record_frame(false, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
+                    end
+
+                    if left_pressed and not input_last_left then
+                        piece_move_left()
+                        timer_fast_move = -fast_move_initial_delay
+                    end
+
+                    if right_pressed and not input_last_right then
+                        piece_move_right()
+                        timer_fast_move = -fast_move_initial_delay
+                    end
+
+                    if left_pressed or right_pressed then
+                        timer_fast_move = timer_fast_move + 1
+                        while timer_fast_move >= fast_move_period do
+                            timer_fast_move = timer_fast_move - fast_move_period
+                            if left_pressed then piece_move_left() end
+                            if right_pressed then piece_move_right() end
+                        end
+                    end
+
+                    if down_pressed and not input_last_down then
+                        fast_drop = true
+                        fast_drop_row = piece.j
+
+                        -- don't drop multiple times
+                        timer_drop = min(min(timer_drop, fast_drop_period), get_drop_period())
+                    elseif not down_pressed and input_last_down then
+                        fast_drop = false
+                    end
+
+                    if cw_pressed and not input_last_cw then
+                        piece_rotate_cw()
+                    end
+
+                    if ccw_pressed and not input_last_ccw then
+                        piece_rotate_ccw()
+                    end
+
+                    -- drop
+                    local drop_period = get_drop_period(level)
+                    if first_drop then drop_period = first_drop_period end
+                    if fast_drop then drop_period = min(fast_drop_period, drop_period) end
+
+                    timer_drop = timer_drop + 1
+                    while timer_drop >= drop_period do
+                        piece_move_down(left_pressed, right_pressed)
+                        timer_drop = timer_drop - drop_period
+                        first_drop = false
+                    end
+
+                    input_last_left = left_pressed
+                    input_last_right = right_pressed
+                    input_last_down = down_pressed
+                    input_last_cw = cw_pressed
+                    input_last_ccw = ccw_pressed
                 end
-
-                if cw_pressed and not input_last_cw then
-                    piece_rotate_cw()
-                end
-
-                if ccw_pressed and not input_last_ccw then
-                    piece_rotate_ccw()
-                end
-
-                -- drop
-                local drop_period = get_drop_period(level)
-                if first_drop then drop_period = first_drop_period end
-                if fast_drop then drop_period = min(fast_drop_period, drop_period) end
-
-                timer_drop = timer_drop + 1
-                while timer_drop >= drop_period do
-                    piece_move_down(left_pressed, right_pressed)
-                    timer_drop = timer_drop - drop_period
-                    first_drop = false
-                end
-
-                input_last_left = left_pressed
-                input_last_right = right_pressed
-                input_last_down = down_pressed
-                input_last_cw = cw_pressed
-                input_last_ccw = ccw_pressed
             end
+        end
+    else
+        -- Initialization
+        if btnp(buttons.right) then
+            // record
+            replay = false
+            comm_start_record({ prng.a, prng.b, prng.c, prng.d })
+            initialized = true
+        elseif btnp(buttons.left) then
+            // replay
+            replay = true
+            comm_start_replay()
+            initialized = true
         end
     end
 end
