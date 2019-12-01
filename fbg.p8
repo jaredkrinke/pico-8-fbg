@@ -292,12 +292,27 @@ function comm_send_message(type, body)
 end
 
 local comm_message_types = {
-    start_record = 1,
-    start_replay = 2,
-    record_frame = 3,
-    end_record = 4,
-    replay_frame = 5,
+    initialize = 1,
+    start_record = 2,
+    start_replay = 3,
+    record_frame = 4,
+    end_record = 5,
+    replay_frame = 6,
 }
+
+local comm_enabled = false
+function comm_initialize()
+    -- check to see if host is able to communicate
+    comm_enabled = false
+    comm_send_message(comm_message_types.initialize, {})
+    local responses = comm_read_messages()
+    if #responses > 0 and responses[1].type == comm_message_types.initialize then
+        local body = responses[1].body
+        if #body > 0 then
+            comm_enabled = (body[1] ~= 0)
+        end
+    end
+end
 
 function comm_start_record(seeds)
     local body = {}
@@ -489,7 +504,7 @@ function game_end()
     game_paused = true
     game_over = true
 
-    if not replay then
+    if comm_enabled and not replay then
         comm_end_record(score)
     end
 end
@@ -676,7 +691,13 @@ function reset()
     timer_drop = 0
 end
 
+local initialized = false -- used to select record or playback
 function _init()
+    comm_initialize()
+    if not comm_enabled then
+        initialized = true
+    end
+
     for j=1, board_height do
         board[j] = {}
     end
@@ -684,7 +705,6 @@ function _init()
     reset()
 end
 
-local initialized = false
 function _update60()
     if initialized then
         -- Already initialized
@@ -716,7 +736,7 @@ function _update60()
                     local cw_pressed
                     local ccw_pressed
 
-                    if replay then
+                    if comm_enabled and replay then
                         up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed = comm_replay_frame()
                     else
                         left_pressed = btn(buttons.left)

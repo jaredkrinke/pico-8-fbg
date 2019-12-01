@@ -555,11 +555,12 @@
 	<script type="text/javascript">
 	// Messaging
 	var messageTypes = {
-        startRecord: 1,
-        startReplay: 2,
-        recordFrame: 3,
-        endRecord: 4,
-        replayFrame: 5
+		initialize: 1,
+        startRecord: 2,
+        startReplay: 3,
+        recordFrame: 4,
+        endRecord: 5,
+        replayFrame: 6
 	};
 
 	var messageHandlers = [];
@@ -568,6 +569,14 @@
     // Recording
     var recording = false;
     var interactions = "";
+	var replayKey = "fbg_replay";
+
+	messageHandlers[messageTypes.initialize] = function () {
+		responses.push({
+			type: messageTypes.initialize,
+			body: [ 1 ] // 1 for "communication enabled"
+		})
+	}
 
 	messageHandlers[messageTypes.startRecord] = function (bytes) {
         recording = true;
@@ -589,7 +598,7 @@
         
         // TODO: Upload seed, replay, score; retrieve a graph or high score list or something
         var str = LZString.compressToBase64(interactions);
-        localStorage["replay"] = str;
+        localStorage[replayKey] = str;
 	};
 
     // Playback
@@ -599,7 +608,7 @@
 	messageHandlers[messageTypes.startReplay] = function (bytes) {
         replaying = true;
         replayIndex = 16;
-		replay = LZString.decompressFromBase64(localStorage["replay"]);
+		replay = LZString.decompressFromBase64(localStorage[replayKey]);
 
         var bytes = [];
         for (var i = 0; i < 16; i++) {
@@ -756,68 +765,6 @@
 	}
 
 	gpio.subscribe(gpioProcess);
-
-//		// GPIO interactions
-//		var gpio = getP8Gpio();
-//		var gpioButtons = 0;
-//		var gpioScoreRoot = 1;
-//		var gpioReplay = 10;
-//		var gpioReplayButtons = 11;
-//		var gpioSeedBase = 20;
-//		var interactions = "";
-//		var replay = LZString.decompressFromBase64(localStorage["replay"]);
-//		var replayIndex = 16;
-//        var replayStarted = false;
-//
-//        var tmp = "";
-//        for (var i = 0; i < 16; i++) {
-//            var byte = replay.charCodeAt(i);
-//            if (byte < 16) {
-//                tmp += "0";
-//            }
-//            tmp += byte.toString(16);
-//        }
-//        alert(tmp);
-//        var frame = 0;
-//
-//		gpio.subscribe(function(indices) {
-//			if (indices.includes(gpioScoreRoot)) {
-//				// Read high score
-//				var score = 0;
-//				for (var i = 0; i < 6; i++) {
-//					score += gpio[i + gpioScoreRoot] * Math.pow(10, i);
-//				}
-//	
-//				// TODO: Upload seed, replay, score; retrieve a graph or high score list or something
-//				var str = LZString.compressToBase64(interactions);
-//				localStorage["replay"] = str;
-//			}
-//
-//            if (indices.includes(gpioSeedBase)) {
-//                for (var i = 0; i < 16; i++) {
-//                    interactions += String.fromCharCode(gpio[gpioSeedBase + i]);
-//                }
-//            }
-//	
-//			if (indices.includes(gpioButtons)) {
-//				var byte = gpio[gpioButtons];
-//				interactions += String.fromCharCode(byte);
-//			}
-//	
-//			if (indices.includes(gpioReplay)) {
-//				gpio[gpioReplayButtons] = replay.charCodeAt(replayIndex++);
-//                gpio[50] = frame;
-//                frame = (frame + 1) % 256;
-//
-//                if (!replayStarted) {
-//                    replayStarted = true;
-//                    for (var i = 0; i < 16; i++) {
-//                        gpio[gpioSeedBase + i] = replay.charCodeAt(i);
-//                    }
-//                }
-//			}
-//	
-//		}, true);
 	</script>
 	
 	<STYLE TYPE="text/css">
