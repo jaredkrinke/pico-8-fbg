@@ -118,7 +118,7 @@ local block_size = 6
 local board_offset = 4
 
 local cleared_to_score = { 40, 100, 300, 1200 }
-local done_period = 60
+local transition_period = 60
 local fast_move_initial_delay = 10
 local fast_move_period = 6
 local first_drop_period = 60
@@ -217,7 +217,7 @@ xorwow = {
     end,
 }
 
-local prng = xorwow.new()
+local prng = nil -- initialized later
 
 -- communication
 local comm_gpio_base = {
@@ -314,7 +314,8 @@ function comm_initialize()
     end
 end
 
-function comm_start_record(seeds)
+function comm_start_record()
+    local seeds = { prng.a, prng.b, prng.c, prng.d }
     local body = {}
     for i = 1, #seeds, 1 do
         local seed = seeds[i]
@@ -363,8 +364,6 @@ function comm_start_replay()
         end
         
         prng = xorwow.new_with_seed(seeds[1], seeds[2], seeds[3], seeds[4])
-        piece_advance()
-        piece_advance()
     end
 end
 
@@ -387,15 +386,22 @@ function comm_replay_frame()
     return false, false, false, false, false, false
 end
 
--- game state
-score = big_int.create()
+-- overall state
+local game_states = {
+    initializing = 1,
+    menu = 2,
+    started = 3,
+    scores = 4,
+}
 
+local game_state = game_states.initializing
+
+-- game state
 local board = {}
 local lines = 0
 local level = 0
 local game_over = false
 local game_paused = false
-local game_started = false
 
 local input_last_left = false
 local input_last_right = false
@@ -411,6 +417,7 @@ local fast_move = false
 local timer_next_piece = 0
 local timer_fast_move = 0
 local timer_drop = 0
+local timer_end = 0
 
 local piece = {
     index = 1,
@@ -422,6 +429,7 @@ local piece = {
 
 -- game logic
 local replay = false
+local score = big_int.create()
 
 function board_reset()
     for j=1, board_height do
@@ -507,6 +515,8 @@ function game_end()
     if comm_enabled and not replay then
         comm_end_record(score)
     end
+
+    timer_transition = transition_period
 end
 
 function piece_hide()
@@ -670,7 +680,7 @@ function get_drop_period()
     end
 end
 
-function reset()
+function game_reset()
     board_reset()
     piece.index = 0
     piece.next_index = 0
@@ -681,7 +691,6 @@ function reset()
     level = 0
     game_over = false
     game_paused = true
-    game_started = false
 
     first_drop = true
     fast_drop = false
@@ -689,45 +698,116 @@ function reset()
     fast_move = false
 
     timer_drop = 0
+    timer_transition = transition_period
 end
 
-local initialized = false -- used to select record or playback
+-- menu
+local menu_item_index = 1
+
+menu_item = {}
+menu_item_mt = { __index = menu_item }
+
+function menu_item.create(item)
+    setmetatable(item, menu_item_mt)
+    return item
+end
+
+function menu_item.should_show()
+    return true
+end
+
+function game_start()
+    game_reset()
+    game_paused = false
+    music(0)
+    game_state = game_states.started
+end
+
+local menu_items = {
+    menu_item.create({
+        label = "start game",
+        action = function ()
+            replay = false
+            prng = xorwow.new()
+            comm_start_record()
+            game_start()
+        end,
+    }),
+    -- todo: initials?
+    -- todo: music toggle
+    menu_item.create({
+        -- todo: only show if a replay is available
+        label = "replay",
+        should_show = function () return comm_enabled end,
+        action = function ()
+            replay = true
+            comm_start_replay() -- note: this will initialize prng
+            game_start()
+        end,
+    }),
+}
+
 function _init()
     comm_initialize()
-    if not comm_enabled then
-        initialized = true
-    end
+    game_state = game_states.menu
 
     for j=1, board_height do
         board[j] = {}
     end
-
-    reset()
 end
 
-function _update60()
-    if initialized then
-        -- Already initialized
-        if game_paused then
-            if not game_started and btn() ~= 0 then
-                game_started = true
-                game_paused = false
-                music(0)
-            end
-        else
-            if piece.index == 0 and timer_next_piece > 0 then
-                timer_next_piece = timer_next_piece - 1
-            else
-                if piece.index == 0 then
-                    board_expunge_rows()
-                    piece_advance()
-                    if piece.index > 0 and not piece_validate() then
-                        game_end()
-                    end
-                end
+local update_handlers = {
+    [game_states.menu] = function ()
+        if btnp(buttons.z) or btnp(buttons.x) then
+            menu_items[menu_item_index].action()
+        elseif btnp(buttons.up) or btnp(buttons.down) then
+            local offset = -1
+            if btnp(buttons.down) then offset = 1 end
 
+            -- find next menu item
+            local new_menu_item_index
+            while true do
+                new_menu_item_index = menu_item_index + offset
+                if new_menu_item_index >= 1 and new_menu_item_index <= #menu_items then
+                    if menu_items[new_menu_item_index].should_show() then
+                        menu_item_index = new_menu_item_index
+                        break
+                    end
+                else
+                    break
+                end
+            end
+        elseif btnp(buttons.down) and menu_item_index < #menu_items then
+        end
+    end,
+
+    [game_states.started] = function ()
+        -- todo: need a way to advance to scores page
+        if piece.index == 0 and timer_next_piece > 0 then
+            timer_next_piece = timer_next_piece - 1
+        else
+            if piece.index == 0 then
+                board_expunge_rows()
+                piece_advance()
+                if piece.index > 0 and not piece_validate() then
+                    game_end()
+                end
+            end
+
+            if timer_transition > 0 then
+                timer_transition = timer_transition - 1
+            end
+
+            if timer_transition == 0 then
                 -- game may be paused due to loss
-                if not game_paused then
+                if game_paused then
+                    if game_over then
+                        if btnp(buttons.z) or btnp(buttons.x) then
+                            -- todo: should go to scores page once that exists
+                            game_state = game_states.menu
+                        end
+                    end
+                else
                     -- input
                     local up_pressed
                     local left_pressed
@@ -735,7 +815,7 @@ function _update60()
                     local down_pressed
                     local cw_pressed
                     local ccw_pressed
-
+    
                     if comm_enabled and replay then
                         up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed = comm_replay_frame()
                     else
@@ -744,21 +824,20 @@ function _update60()
                         down_pressed = btn(buttons.down)
                         cw_pressed = btn(buttons.z)
                         ccw_pressed = btn(buttons.x)
-
-                        -- TODO: Only for testing recording right now
+    
                         comm_record_frame(false, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
                     end
-
+    
                     if left_pressed and not input_last_left then
                         piece_move_left()
                         timer_fast_move = -fast_move_initial_delay
                     end
-
+    
                     if right_pressed and not input_last_right then
                         piece_move_right()
                         timer_fast_move = -fast_move_initial_delay
                     end
-
+    
                     if left_pressed or right_pressed then
                         timer_fast_move = timer_fast_move + 1
                         while timer_fast_move >= fast_move_period do
@@ -767,37 +846,37 @@ function _update60()
                             if right_pressed then piece_move_right() end
                         end
                     end
-
+    
                     if down_pressed and not input_last_down then
                         fast_drop = true
                         fast_drop_row = piece.j
-
+    
                         -- don't drop multiple times
                         timer_drop = min(min(timer_drop, fast_drop_period), get_drop_period())
                     elseif not down_pressed and input_last_down then
                         fast_drop = false
                     end
-
+    
                     if cw_pressed and not input_last_cw then
                         piece_rotate_cw()
                     end
-
+    
                     if ccw_pressed and not input_last_ccw then
                         piece_rotate_ccw()
                     end
-
+    
                     -- drop
                     local drop_period = get_drop_period(level)
                     if first_drop then drop_period = first_drop_period end
                     if fast_drop then drop_period = min(fast_drop_period, drop_period) end
-
+    
                     timer_drop = timer_drop + 1
                     while timer_drop >= drop_period do
                         piece_move_down(left_pressed, right_pressed)
                         timer_drop = timer_drop - drop_period
                         first_drop = false
                     end
-
+    
                     input_last_left = left_pressed
                     input_last_right = right_pressed
                     input_last_down = down_pressed
@@ -806,20 +885,17 @@ function _update60()
                 end
             end
         end
-    else
-        -- Initialization
-        if btnp(buttons.right) then
-            // record
-            replay = false
-            comm_start_record({ prng.a, prng.b, prng.c, prng.d })
-            initialized = true
-        elseif btnp(buttons.left) then
-            // replay
-            replay = true
-            comm_start_replay()
-            initialized = true
+    end,
+
+    [game_states.scores] = function ()
+        if btnp() ~= 0 then
+            game_state = game_states.menu
         end
-    end
+    end,
+}
+
+function _update60()
+    update_handlers[game_state]()
 end
 
 function map_position(i ,j)
@@ -889,76 +965,113 @@ function fade_palette(offset)
     end
 end
 
-function _draw()
+function draw_clear()
     cls(colors.indigo)
+end
 
-    -- title
+function draw_title(x, y)
     palt(colors.black, false)
-    spr(sprites.title, 64, 0, 8, 4)
+    spr(sprites.title, x, y, 8, 4)
     palt()
+end
 
-    -- board
-    local x2, y2 = board_offset + block_size * board_width - 1, board_offset + block_size * board_height - 1
-    draw_box(board_offset, board_offset, x2, y2)
-    clip(board_offset, board_offset, block_size * board_width, block_size * board_height)
-    local deleted_count = 0
-    for j=1, board_height do if board[j].deleted then deleted_count = deleted_count + 1 end end
+local draw_handlers = {
+    [game_states.menu] = function ()
+        draw_clear()
+        draw_title(32, 0)
 
-    local t = 1 - (timer_next_piece / (next_piece_delay + clear_delay))
-    local flash = t >= 0 and t < 0.5 and (flr(t * 8) % 2 == 1)
-    for j=1, board_height do
-        local deleted = board[j].deleted
-        local draw = true
-        if deleted then
-            if t <= 0.1 then
-                fade_palette(1)
-            elseif t <= 0.3 then
-                fade_palette(2)
-            elseif t <= 0.5 then
-                fade_palette(3)
-            else
-                draw = false
+        local x, y = 24, 40
+        draw_box(x - 16, y - 8, 120, 120)
+        for i = 1, #menu_items, 1 do
+            local menu_item = menu_items[i]
+            if menu_item.should_show() then
+                color(colors.white)
+                if i == menu_item_index then
+                    print(">", x - 8, y)
+                    color(colors.yellow)
+                end
+
+                print(menu_item.label, x, y)
+                y = y + 8
             end
         end
+    end,
 
-        if draw then
-            for i=1, board_width do
-                local v = board[j][i]
-                if v > 0 then
-                    draw_block(i, j, v)
+    [game_states.started] = function ()
+        draw_clear()
+        draw_title(64, 0)
+
+        -- board
+        local x2, y2 = board_offset + block_size * board_width - 1, board_offset + block_size * board_height - 1
+        draw_box(board_offset, board_offset, x2, y2)
+        clip(board_offset, board_offset, block_size * board_width, block_size * board_height)
+        local deleted_count = 0
+        for j=1, board_height do if board[j].deleted then deleted_count = deleted_count + 1 end end
+
+        local t = 1 - (timer_next_piece / (next_piece_delay + clear_delay))
+        local flash = t >= 0 and t < 0.5 and (flr(t * 8) % 2 == 1)
+        for j=1, board_height do
+            local deleted = board[j].deleted
+            local draw = true
+            if deleted then
+                if t <= 0.1 then
+                    fade_palette(1)
+                elseif t <= 0.3 then
+                    fade_palette(2)
+                elseif t <= 0.5 then
+                    fade_palette(3)
+                else
+                    draw = false
                 end
             end
+
+            if draw then
+                for i=1, board_width do
+                    local v = board[j][i]
+                    if v > 0 then
+                        draw_block(i, j, v)
+                    end
+                end
+            end
+
+            if deleted then
+                pal()
+            end
+
+            -- quad effect
+            if flash and deleted and deleted_count >= 4 then
+                local x, y = map_position(1, j)
+                rectfill(x, y, x + board_width * block_size, y + block_size, colors.white)
+            end
         end
 
-        if deleted then
-            pal()
+        -- pieces
+        draw_piece(piece.i, piece.j, piece.index, piece.rotation_index)
+        clip()
+
+        local x, y = 96 - 2 * block_size, 32 + board_offset + 9 * 6
+        draw_box(x - 1, y - 1, x + 4 * block_size, y + 6 + 4 + 2 * block_size, "next")
+        local next_index = piece.next_index
+        draw_piece_absolute(96 - piece_offsets[next_index] * block_size - piece_widths[next_index] * block_size / 2, y + 6 + 2 + (2 - piece_heights[next_index]) * block_size / 2, piece.next_index, 1)
+
+        -- score
+        draw_box_number(64 + board_offset + 1, 32 + board_offset + 6, "level", level, 2)
+        draw_box_number(128 - board_offset - 4 * 5, 32 + board_offset + 6, "lines", level, 3)
+        draw_box_number(96 - 7 * 2, 32 + board_offset + 5 * 6, "score", score, 7)
+
+        if game_over then
+            rectfill(32 - 5 * 4, 64 - 3, 32 + 5 * 4, 64 + 3, colors.black)
+            print("game over!", 32 - 5 * 4 + 1, 64 - 2, colors.white)
         end
+    end,
 
-        -- quad effect
-        if flash and deleted and deleted_count >= 4 then
-            local x, y = map_position(1, j)
-            rectfill(x, y, x + board_width * block_size, y + block_size, colors.white)
-        end
-    end
+    [game_states.scores] = function ()
+        -- todo
+    end,
+}
 
-    -- pieces
-    draw_piece(piece.i, piece.j, piece.index, piece.rotation_index)
-    clip()
-
-    local x, y = 96 - 2 * block_size, 32 + board_offset + 9 * 6
-    draw_box(x - 1, y - 1, x + 4 * block_size, y + 6 + 4 + 2 * block_size, "next")
-    local next_index = piece.next_index
-    draw_piece_absolute(96 - piece_offsets[next_index] * block_size - piece_widths[next_index] * block_size / 2, y + 6 + 2 + (2 - piece_heights[next_index]) * block_size / 2, piece.next_index, 1)
-
-    -- score
-    draw_box_number(64 + board_offset + 1, 32 + board_offset + 6, "level", level, 2)
-    draw_box_number(128 - board_offset - 4 * 5, 32 + board_offset + 6, "lines", level, 3)
-    draw_box_number(96 - 7 * 2, 32 + board_offset + 5 * 6, "score", score, 7)
-
-    if game_over then
-        rectfill(32 - 5 * 4, 64 - 3, 32 + 5 * 4, 64 + 3, colors.black)
-        print("game over!", 32 - 5 * 4 + 1, 64 - 2, colors.white)
-    end
+function _draw()
+    draw_handlers[game_state]()
 
     if debug and debug_message ~= nil then
         print(debug_message, 0, 122, colors.white)

@@ -580,6 +580,7 @@
 
 	messageHandlers[messageTypes.startRecord] = function (bytes) {
         recording = true;
+		interactions = "";
         for (var i = 0; i < bytes.length; i++) {
             interactions += String.fromCharCode(bytes[i]);
         }
