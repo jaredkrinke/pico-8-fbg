@@ -712,8 +712,22 @@ function menu_item.create(item)
     return item
 end
 
-function menu_item.should_show()
+function menu_item:draw(x, y, focused)
+    color(colors.white)
+    if focused then color(colors.yellow) end
+    print(self.label, x, y)
+end
+
+function menu_item:should_show()
     return true
+end
+
+function menu_item:handle_input()
+    if btnp(buttons.z) then
+        self:activate()
+        return true
+    end
+    return false
 end
 
 function game_start()
@@ -723,26 +737,96 @@ function game_start()
     game_state = game_states.started
 end
 
+-- todo: load from cart data
+local player_initial_indexes = { 1, 2, 3 }
+local letters = "abcdefghijklmnopqrstuvwxyz"
+
 local menu_items = {
     menu_item.create({
         label = "start game",
-        action = function ()
+        activate = function ()
             replay = false
             prng = xorwow.new()
             comm_start_record()
             game_start()
         end,
     }),
+    -- todo: mode
+    -- todo: height
+    -- todo scores
     -- todo: initials?
     -- todo: music toggle
     menu_item.create({
         -- todo: only show if a replay is available
-        label = "replay",
+        label = "watch replay",
         should_show = function () return comm_enabled end,
-        action = function ()
+        activate = function ()
             replay = true
             comm_start_replay() -- note: this will initialize prng
             game_start()
+        end,
+    }),
+    menu_item.create({
+        label = "set initials:",
+        initials = player_initial_indexes,
+        index = 0,
+        handle_input = function (self)
+            local handled = false
+            local editing = false
+            local done = false
+            if self.index > 0 then editing = true end
+            if btnp(buttons.x) then
+                handled = true
+                done = true
+            elseif btnp(buttons.z) then
+                handled = true
+                self.index = self.index + 1
+                if self.index > #self.initials then
+                    done = true
+                end
+            elseif editing then
+                handled = true
+                if btnp(buttons.up) or btnp(buttons.down) then
+                    local offset = -1
+                    if btnp(buttons.down) then offset = 1 end
+                    local new_letter_index = self.initials[self.index] + offset
+                    if new_letter_index >= 1 and new_letter_index <= #letters then
+                        self.initials[self.index] = new_letter_index
+                    end
+                end
+            end
+
+            if done then
+                -- todo: save initials
+                self.index = 0
+            end
+            return handled
+        end,
+        draw = function (self, x, y, focused)
+            color(colors.white)
+            if focused and self.index <= 0 then color(colors.yellow) end
+            print(self.label, x, y)
+
+            for i = 1, #self.initials, 1 do
+                local x2 = x + 4 * #self.label + 4 * i
+                local letter_index = self.initials[i]
+
+                if self.index == i then
+                    print("^", x2, y + 6, colors.light_gray)
+                    color(colors.yellow)
+                else
+                    color(colors.white)
+                end
+
+                print(sub(letters, letter_index, letter_index), x2, y)
+            end
+        end,
+    }),
+    menu_item.create({
+        label = "view high scores",
+        activate = function ()
+            -- todo
+            debug_message = "not implemented!"
         end,
     }),
 }
@@ -758,18 +842,19 @@ end
 
 local update_handlers = {
     [game_states.menu] = function ()
-        if btnp(buttons.z) or btnp(buttons.x) then
-            menu_items[menu_item_index].action()
-        elseif btnp(buttons.up) or btnp(buttons.down) then
+        local menu_item = menu_items[menu_item_index]
+        local handled = menu_item:handle_input()
+
+        if not handled and (btnp(buttons.up) or btnp(buttons.down)) then
             local offset = -1
             if btnp(buttons.down) then offset = 1 end
 
             -- find next menu item
-            local new_menu_item_index
+            local new_menu_item_index = menu_item_index
             while true do
-                new_menu_item_index = menu_item_index + offset
+                new_menu_item_index = new_menu_item_index + offset
                 if new_menu_item_index >= 1 and new_menu_item_index <= #menu_items then
-                    if menu_items[new_menu_item_index].should_show() then
+                    if menu_items[new_menu_item_index]:should_show() then
                         menu_item_index = new_menu_item_index
                         break
                     end
@@ -777,7 +862,6 @@ local update_handlers = {
                     break
                 end
             end
-        elseif btnp(buttons.down) and menu_item_index < #menu_items then
         end
     end,
 
@@ -888,7 +972,7 @@ local update_handlers = {
     end,
 
     [game_states.scores] = function ()
-        if btnp() ~= 0 then
+        if btnp(buttons.z) or btnp(buttons.x) then
             game_state = game_states.menu
         end
     end,
@@ -984,17 +1068,18 @@ local draw_handlers = {
         draw_box(x - 16, y - 8, 120, 120)
         for i = 1, #menu_items, 1 do
             local menu_item = menu_items[i]
-            if menu_item.should_show() then
-                color(colors.white)
-                if i == menu_item_index then
-                    print(">", x - 8, y)
-                    color(colors.yellow)
+            if menu_item:should_show() then
+                local focused = i == menu_item_index
+                if focused then
+                    print(">", x - 8, y, colors.light_gray)
+                    color(colors.white)
                 end
-
-                print(menu_item.label, x, y)
-                y = y + 8
+                menu_item:draw(x, y, focused);
+                y = y + 9
             end
         end
+
+        print("(use arrow keys, z, x)", 20, 112, colors.white)
     end,
 
     [game_states.started] = function ()
