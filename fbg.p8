@@ -737,10 +737,35 @@ function game_start()
     game_state = game_states.started
 end
 
--- todo: load from cart data
+-- cartdata
+cartdata("jk_fallingblockgame")
+local cartdata_indexes = {
+    initials = 1,
+}
+
+-- player initials
 local player_initial_indexes = { 1, 2, 3 }
 local letters = "abcdefghijklmnopqrstuvwxyz"
 
+function player_initials_save()
+    local number =
+        bor(lshr(player_initial_indexes[1], 16),
+        bor(lshr(player_initial_indexes[2], 8),
+        bor(player_initial_indexes[3])))
+
+    dset(cartdata_indexes.initials, number)
+end
+
+function player_initials_load()
+    local number = dget(cartdata_indexes.initials)
+    if number ~= 0 then
+        player_initial_indexes[1] = band(0xff, shl(number, 16))
+        player_initial_indexes[2] = band(0xff, shl(number, 8))
+        player_initial_indexes[3] = band(0xff, number)
+    end
+end
+
+-- menus
 local menu_items = {
     menu_item.create({
         label = "start game",
@@ -797,7 +822,7 @@ local menu_items = {
             end
 
             if done then
-                -- todo: save initials
+                player_initials_save()
                 self.index = 0
             end
             return handled
@@ -832,6 +857,8 @@ local menu_items = {
 }
 
 function _init()
+    player_initials_load()
+
     comm_initialize()
     game_state = game_states.menu
 
