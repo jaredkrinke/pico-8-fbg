@@ -767,7 +767,6 @@ function piece_move_down(left_pressed, right_pressed)
             end
         else
             piece_complete()
-            sfx(sounds.land)
 
             local previous_level = level
             local cleared = board_clean()
@@ -789,6 +788,8 @@ function piece_move_down(left_pressed, right_pressed)
                 if previous_level < level then
                     sfx(sounds.level_up)
                 end
+            else
+                sfx(sounds.land)
             end
         end
     end
@@ -876,7 +877,7 @@ end
 function game_start()
     game_reset()
     game_paused = false
-    music(0)
+    music(0, 0, 0xc) -- reserve last 2 channels for music
     game_state = game_states.started
 end
 
@@ -1528,13 +1529,13 @@ __sfx__
 011400000070013720007001372000700137200070013720007001172000700117200070011720007001172000700107200070010720007001072000700107200070013720007001372000700137200070013720
 
 __music__
-01 10151944
-00 11161a44
-00 10151944
-00 11161a44
-00 12171b44
-00 13181c44
-00 10151944
-00 11161a44
-02 11161a14
+01 44191510
+00 441a1611
+00 44191510
+00 441a1611
+00 441b1712
+00 441c1813
+00 44191510
+00 441a1611
+02 1a161411
 
