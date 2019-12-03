@@ -856,6 +856,58 @@ function menu_item.create(item)
     return item
 end
 
+function menu_item.create_choice(label, choices)
+    local index = 1
+    return menu_item.create({
+        label = label,
+        set_index = function (self, new_index)
+            -- todo: persist across runs
+            if new_index ~= index then
+                index = new_index
+                choices[index].callback()
+                return true
+            end
+            return false
+        end,
+        handle_input = function (self)
+            local handled = false
+            if btnp(buttons.z) or btnp(buttons.left) or btnp(buttons.right) then
+                local new_index = index
+                if btnp(buttons.z) then
+                    new_index = index % #choices + 1
+                else
+                    local offset = 1
+                    if btnp(buttons.left) then offset = -1 end
+                    new_index = min(#choices, max(1, new_index + offset))
+                end
+
+                self:set_index(new_index)
+            end
+        end,
+        draw = function (self, x, y, focused)
+            menu_item.draw(self, x, y, focused)
+            x = x + 4 * #self.label + 4
+
+            color(colors.light_gray)
+            if index > 1 then
+                print("<", x, y)
+                x = x + 8
+            end
+
+            local choice_label = choices[index].label
+            color(colors.white)
+            if focused then color(colors.yellow) end
+            print(choice_label, x, y)
+            x = x + 4 * #choice_label + 4
+
+            color(colors.light_gray)
+            if index < #choices then
+                print(">", x, y)
+            end
+        end,
+    })
+end
+
 function menu_item:draw(x, y, focused)
     color(colors.white)
     if focused then color(colors.yellow) end
@@ -874,11 +926,16 @@ function menu_item:handle_input()
     return false
 end
 
+local music_muted = false
 function game_start()
     game_reset()
     game_paused = false
-    music(0, 0, 0xc) -- reserve last 2 channels for music
     game_state = game_states.started
+
+    if not music_muted then
+        -- reserve last 2 channels for music
+        music(0, 0, 0xc)
+    end
 end
 
 -- cartdata
@@ -997,6 +1054,10 @@ local menu_items = {
             -- todo
             debug_message = "not implemented!"
         end,
+    }),
+    menu_item.create_choice("music:", {
+        { label = "on", callback = function () music_muted = false end },
+        { label = "off", callback = function () music_muted = true end },
     }),
 }
 
