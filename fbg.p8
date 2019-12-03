@@ -947,12 +947,12 @@ local menu_items = {
             if btnp(buttons.x) then
                 handled = true
                 done = true
-            elseif btnp(buttons.z) then
+            elseif btnp(buttons.z) or btnp(buttons.left) or btnp(buttons.right) then
                 handled = true
-                self.index = self.index + 1
-                if self.index > #self.initials then
-                    done = true
-                end
+                local offset = 1
+                if btnp(buttons.left) then offset = -1 end
+                self.index = (self.index + offset) % (1 + #self.initials)
+                if self.index == 0 then done = true end
             elseif editing then
                 handled = true
                 if btnp(buttons.up) or btnp(buttons.down) then
