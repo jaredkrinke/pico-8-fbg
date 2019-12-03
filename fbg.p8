@@ -55,60 +55,189 @@ local sounds = {
 }
 
 -- utilities
-big_int = {}
-big_int_mt = {
-    __index = big_int,
+uint32 = {}
+uint32_mt = {
+    __index = uint32,
+
     __concat = function (a, b)
-        if type(a) == "string" and getmetatable(b) == big_int_mt then
-            return a .. b:to_string()
-        end
+        if getmetatable(a) == uint32_mt then a = a:to_string() end
+        if getmetatable(b) == uint32_mt then b = b:to_string() end
+        return a .. b
+    end,
+
+    __eq = function (x, y)
+        return x.value == y.value
+    end,
+
+    __lt = function (x, y)
+        return x.value < y.value
     end,
 }
 
-function big_int.create()
-    local instance = {
-        digits = {},
-    }
-    setmetatable(instance, big_int_mt)
+local function uint32_number_to_value(n)
+    return lshr(n, 16)
+end
 
+function uint32.create()
+    local instance = { value = 0 }
+    setmetatable(instance, uint32_mt)
     return instance
 end
 
-function big_int:reset()
-    local digits = self.digits
-    local count = #digits
-    for i=1, count do
-        digits[i] = nil
+function uint32:set_raw(x)
+    if self.value ~= x then
+        self.value = x
+        self.formatted = false
     end
+    return self
 end
 
-function big_int:add(x)
-    local digits = self.digits
-    local i = 1
+function uint32:set(a)
+    return self:set_raw(a.value)
+end
+
+function uint32.create_raw(x)
+    local instance = uint32.create()
+    if instance.value ~= x then
+        instance:set_raw(x)
+    end
+    return instance
+end
+
+function uint32.create_from_number(n)
+    return uint32.create_raw(uint32_number_to_value(n))
+end
+
+function uint32.create_from_bytes(a, b, c, d)
+    return uint32.create_raw(bor(lshr(a, 16), bor(lshr(b, 8), bor(c, bor(shl(d, 8))))))
+end
+
+function uint32:set_number(n)
+    return self:set_raw(uint32_number_to_value(n))
+end
+
+function uint32:add_raw(y)
+    self:set_raw(self.value + y)
+    return self
+end
+
+function uint32:add(b)
+    return self:add_raw(b.value)
+end
+
+function uint32:add_number(n)
+    return self:add_raw(uint32_number_to_value(n))
+end
+
+function uint32:multiply_raw(y)
+    local x = self.value
+    if x < y then x, y = y, x end
+    local acc = 0
+
+    for i = y, 0x0000.0001, -0x0000.0001 do
+        acc = acc + x
+    end
+    self:set_raw(acc)
+    return self
+end
+
+function uint32:multiply(b)
+    return self:multiply_raw(b.value)
+end
+
+function uint32:multiply_number(n)
+    return self:multiply_raw(uint32_number_to_value(n))
+end
+
+local function decimal_digits_add_in_place(a, b)
     local carry = 0
-    while x > 0 or carry > 0 do
-        local sum = carry + (digits[i] or 0) + (x % 10)
-        digits[i] = sum % 10
+    local i = 1
+    local digits = max(#a, #b)
+    while i <= digits or carry > 0 do
+        local left = a[i]
+        local right = b[i]
+        if left == nil then left = 0 end
+        if right == nil then right = 0 end
+        local sum = left + right + carry
+        a[i] = sum % 10
         carry = flr(sum / 10)
-        x = flr(x / 10)
         i = i + 1
     end
 end
 
-function big_int:to_string()
-    local digits = self.digits
-    local count = #digits
+local function decimal_digits_double(a)
+    local result = {}
+    for i = 1, #a, 1 do result[i] = a[i] end
+    decimal_digits_add_in_place(result, a)
+    return result
+end
 
-    if count > 0 then
-        local s = ""
-        for i=count, 1, -1 do
-            s = s .. digits[i]
-        end
-    
-        return s
+local uint32_binary_digits = { { 1 } }
+function uint32:format_decimal()
+    local result_digits = { 0 }
+    local value = self.value
+
+    -- find highest bit
+    local max_index = 0
+    local v = value
+    while v ~= 0 do
+        v = lshr(v, 1)
+        max_index = max_index + 1
     end
 
-    return "0"
+    -- compute the value
+    for i = 1, max_index, 1 do
+        -- make sure decimal representation of this binary bit is cached
+        local binary_digits = uint32_binary_digits[i]
+        if binary_digits == nil then
+            binary_digits = decimal_digits_double(uint32_binary_digits[i - 1])
+            uint32_binary_digits[i] = binary_digits
+        end
+
+        -- find the bit
+        local mask = 1
+        if i <= 16 then
+            mask = lshr(mask, 16 - (i - 1))
+        elseif i > 17 then
+            mask = shl(mask, (i - 1) - 16)
+        end
+
+        local bit = false
+        if band(mask, value) ~= 0 then bit = true end
+
+        -- add, if necessary
+        if bit then
+            decimal_digits_add_in_place(result_digits, binary_digits)
+        end
+    end
+
+    -- concatenate the digits
+    local str = ""
+    for i = #result_digits, 1, -1 do
+        str = str .. result_digits[i]
+    end
+    return str
+end
+
+function uint32:to_string(raw)
+    if raw == true then
+        return tostr(self.value, true)
+    else
+        -- cache format_decimal result
+        if self.formatted ~= true then
+            self.str = self:format_decimal()
+            self.formatted = true
+        end
+        return self.str
+    end
+end
+
+function uint32:to_bytes()
+    local value = self.value
+    return band(0xff, shl(value, 16)),
+        band(0xff, shl(value, 8)),
+        band(0xff, value),
+        band(0xff, lshr(value, 8))
 end
 
 -- game data
@@ -341,10 +470,8 @@ function comm_record_frame(up_pressed, down_pressed, left_pressed, right_pressed
 end
 
 function comm_end_record(score)
-    -- TODO: Enforce max score of 999999
-    -- TODO: This is only for testing high scores!
-    local digits = score.digits
-    comm_send_message(comm_message_types.end_record, { digits[1], digits[2], digits[3], digits[4], digits[5], digits[6] })
+    local a, b, c, d = score:to_bytes()
+    comm_send_message(comm_message_types.end_record, { a, b, c, d })
 end
 
 function comm_start_replay()
@@ -429,7 +556,7 @@ local piece = {
 
 -- game logic
 local replay = false
-local score = big_int.create()
+local score = uint32.create()
 
 function board_reset()
     for j=1, board_height do
@@ -488,22 +615,32 @@ function board_clean()
     return cleared
 end
 
+local uint32_zero = uint32.create()
+local uint32_999999 = uint32.create_raw(0x000F.423F)
+local points = uint32.create()
 function game_score_update(cleared)
-    local points = 0
-    if fast_drop then
-        points = fast_drop_row - piece.j
-    end
+    points:set_raw(0)
 
     if cleared >= 1 and cleared <= #cleared_to_score then
-        points = points + cleared_to_score[cleared] * (level + 1)
+        points:set_number(cleared_to_score[cleared])
+        points:multiply_number(level + 1)
         lines = lines + cleared
         if level < flr(lines / 10) then
             level = level + 1
         end
     end
 
-    if points > 0 then
+    if fast_drop then
+        points:add_number(fast_drop_row - piece.j)
+    end
+
+    if points > uint32_zero then
         score:add(points)
+
+        -- Max score is 999999
+        if score > uint32_999999 then
+            score:set(uint32_999999)
+        end
     end
 end
 
@@ -686,7 +823,7 @@ function game_reset()
     piece.next_index = 0
 
     piece_advance()
-    score:reset()
+    score:set_raw(0)
     lines = 0
     level = 0
     game_over = false
