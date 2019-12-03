@@ -52,6 +52,7 @@ local sounds = {
     clear = 3,
     quad = 4,
     lose = 5,
+    level_up = 6,
 }
 
 -- utilities
@@ -768,6 +769,7 @@ function piece_move_down(left_pressed, right_pressed)
             piece_complete()
             sfx(sounds.land)
 
+            local previous_level = level
             local cleared = board_clean()
             game_score_update(cleared)
             -- todo: scoring, next piece
@@ -782,6 +784,10 @@ function piece_move_down(left_pressed, right_pressed)
                     sfx(sounds.quad)
                 else
                     sfx(sounds.clear)
+                end
+
+                if previous_level < level then
+                    sfx(sounds.level_up)
                 end
             end
         end
@@ -1305,7 +1311,7 @@ local draw_handlers = {
 
         -- score
         draw_box_number(64 + board_offset + 1, 32 + board_offset + 6, "level", level, 2)
-        draw_box_number(128 - board_offset - 4 * 5, 32 + board_offset + 6, "lines", level, 3)
+        draw_box_number(128 - board_offset - 4 * 5, 32 + board_offset + 6, "lines", lines, 3)
         draw_box_number(96 - 7 * 2, 32 + board_offset + 5 * 6, "score", score, 7)
 
         if game_over then
@@ -1496,3 +1502,4 @@ __sfx__
 010200001d3602136024360293601f3602336026360000001e3602236025360000001d3502135024350000001c3502035023350000001b3401f34022340000001a3301e3302133000000193201d3202032000000
 0104000021362000022836200002213520000228352000022d3420000228342000022d3320000228332000022d3220000228322000022d312000022d312000020000200002000020000200002000000000000000
 015a00000065500605006050060500605006050060500605006050060500605006050060500605006050060500605006050060500605006050060500605006050060500605006050060500605000050000500005
+01040000343553c0053c0053030530355343053000534355303053000537305303553430530005373553000534305343553730530005373550000500005343550000500005373550000500005343553730534305
