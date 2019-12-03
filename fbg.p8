@@ -771,7 +771,6 @@ function piece_move_down(left_pressed, right_pressed)
             local previous_level = level
             local cleared = board_clean()
             game_score_update(cleared)
-            -- todo: scoring, next piece
 
             fast_drop = false
             piece_hide()
@@ -824,7 +823,7 @@ function get_drop_period()
     end
 end
 
-function game_reset()
+function game_reset(level_initial)
     board_reset()
     piece.index = 0
     piece.next_index = 0
@@ -832,7 +831,7 @@ function game_reset()
     piece_advance()
     score:set_raw(0)
     lines = 0
-    level = 0
+    level = level_initial
     game_over = false
     game_paused = true
 
@@ -886,22 +885,22 @@ function menu_item.create_choice(label, choices)
         end,
         draw = function (self, x, y, focused)
             menu_item.draw(self, x, y, focused)
-            x = x + 4 * #self.label + 4
+            x = x + 4 * #self.label
 
-            color(colors.light_gray)
-            if index > 1 then
+            color(colors.dark_gray)
+            if focused and index > 1 then
                 print("<", x, y)
-                x = x + 8
             end
+            x = x + 5
 
             local choice_label = choices[index].label
             color(colors.white)
             if focused then color(colors.yellow) end
             print(choice_label, x, y)
-            x = x + 4 * #choice_label + 4
+            x = x + 4 * #choice_label + 1
 
-            color(colors.light_gray)
-            if index < #choices then
+            color(colors.dark_gray)
+            if focused and index < #choices then
                 print(">", x, y)
             end
         end,
@@ -927,8 +926,9 @@ function menu_item:handle_input()
 end
 
 local music_muted = false
+local level_initial = 0
 function game_start()
-    game_reset()
+    game_reset(level_initial)
     game_paused = false
     game_state = game_states.started
 
@@ -966,6 +966,18 @@ function player_initials_load()
     end
 end
 
+-- mode, level, etc.
+local function create_level_choices()
+    local choices = {}
+    for i = 0, 9, 1 do
+        choices[#choices + 1] = {
+            label = "" .. i,
+            callback = function () level_initial = i end,
+        }
+    end
+    return choices
+end
+
 -- menus
 local menu_items = {
     menu_item.create({
@@ -977,23 +989,8 @@ local menu_items = {
             game_start()
         end,
     }),
-    -- todo: mode
-    -- todo: height
-    -- todo scores
-    -- todo: initials?
-    -- todo: music toggle
     menu_item.create({
-        -- todo: only show if a replay is available
-        label = "watch replay",
-        should_show = function () return comm_enabled end,
-        activate = function ()
-            replay = true
-            comm_start_replay() -- note: this will initialize prng
-            game_start()
-        end,
-    }),
-    menu_item.create({
-        label = "set initials:",
+        label = "initials:",
         initials = player_initial_indexes,
         index = 0,
         handle_input = function (self)
@@ -1048,6 +1045,17 @@ local menu_items = {
             end
         end,
     }),
+    menu_item.create_choice("mode:", {
+        -- todo: implement
+        { label = "endless", callback = function ()  end },
+        { label = "limited", callback = function ()  end },
+        { label = "cleanup", callback = function ()  end },
+    }),
+    menu_item.create_choice("level:", create_level_choices()),
+    menu_item.create_choice("music:", {
+        { label = "on", callback = function () music_muted = false end },
+        { label = "off", callback = function () music_muted = true end },
+    }),
     menu_item.create({
         label = "view high scores",
         activate = function ()
@@ -1055,9 +1063,15 @@ local menu_items = {
             debug_message = "not implemented!"
         end,
     }),
-    menu_item.create_choice("music:", {
-        { label = "on", callback = function () music_muted = false end },
-        { label = "off", callback = function () music_muted = true end },
+    menu_item.create({
+        -- todo: only show if a replay is available
+        label = "watch replay",
+        should_show = function () return comm_enabled end,
+        activate = function ()
+            replay = true
+            comm_start_replay() -- note: this will initialize prng
+            game_start()
+        end,
     }),
 }
 
