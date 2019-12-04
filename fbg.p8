@@ -938,6 +938,7 @@ function menu_item.create_choice(label, choices)
         handle_input = function (self)
             local handled = false
             if btnp(buttons.z) or btnp(buttons.left) or btnp(buttons.right) then
+                handled = true
                 local new_index = index
                 local choices = self.choices
                 if btnp(buttons.z) then
@@ -950,6 +951,7 @@ function menu_item.create_choice(label, choices)
 
                 self:set_index(new_index)
             end
+            return handled
         end,
         draw = function (self, x, y, focused)
             menu_item.draw(self, x, y, focused)
@@ -1140,8 +1142,8 @@ local choice_initials = menu_item.create({
             self.index = (self.index + offset) % (1 + #self.initials)
             if self.index == 0 then done = true end
         elseif editing then
-            handled = true
             if btnp(buttons.up) or btnp(buttons.down) then
+                handled = true
                 local offset = -1
                 if btnp(buttons.down) then offset = 1 end
                 local new_letter_index = self.initials[self.index] + offset
@@ -1250,6 +1252,7 @@ local function update_menu(menu_items)
         local handled = menu_item:handle_input()
     
         if not handled and (btnp(buttons.up) or btnp(buttons.down)) then
+            handled = true
             local offset = -1
             if btnp(buttons.down) then offset = 1 end
     
@@ -1266,6 +1269,10 @@ local function update_menu(menu_items)
                     break
                 end
             end
+        end
+
+        if handled then
+            sfx(sounds.move)
         end
     end
 end
