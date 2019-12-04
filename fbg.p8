@@ -440,17 +440,22 @@ function host_initialize()
 end
 
 function host_start_record()
-    local seeds = { prng.a, prng.b, prng.c, prng.d }
-    local body = {}
-    for i = 1, #seeds, 1 do
-        local seed = seeds[i]
-        body[#body + 1] = band(0xff, shl(seed, 16))
-        body[#body + 1] = band(0xff, shl(seed, 8))
-        body[#body + 1] = band(0xff, seed)
-        body[#body + 1] = band(0xff, lshr(seed, 8))
-    end
+    local response = host_process(host_message_types.start_record, {
+        game_mode,
+        level_initial,
+    })
 
-    host_send(host_message_types.start_record, body)
+    if host_enabled and #response == 16 then
+        -- got seed from host
+        local seeds = {}
+        for i = 1, #response, 4 do
+            seeds[#seeds + 1] = bytes_to_number({ response[i], response[i + 1], response[i + 2], response[i + 3] })
+        end
+        prng = xorwow.new_with_seed(seeds[1], seeds[2], seeds[3], seeds[4])
+    else
+        -- no host
+        prng = xorwow.new()
+    end
 end
 
 function host_record_frame(up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
@@ -472,7 +477,7 @@ end
 
 function host_start_replay()
     local response = host_process(host_message_types.start_replay)
-    if #response >= 16 then
+    if #response >= 18 then
         local seeds = {}
         for i = 1, 4, 1 do
             local seed = 0
@@ -484,6 +489,10 @@ function host_start_replay()
         end
         
         prng = xorwow.new_with_seed(seeds[1], seeds[2], seeds[3], seeds[4])
+
+        -- todo: this will change settings for the next launch but not update the ui...
+        set_game_mode(response[17])
+        level_initial = response[18]
     end
 end
 
@@ -571,7 +580,7 @@ local game_mode_to_type = {
 }
 
 local game_type = game_types.infinite
-local game_mode = game_modes.endless
+game_mode = game_modes.endless
 
 function board_reset()
     for j=1, board_height do
@@ -876,7 +885,7 @@ function get_drop_period()
     end
 end
 
-function game_reset(level_initial)
+function game_reset()
     board_reset()
     if game_mode == game_modes.cleanup then
         board_add_garbage()
@@ -992,9 +1001,9 @@ function menu_item:handle_input()
 end
 
 local music_muted = false
-local level_initial = 0
+level_initial = 0
 function game_start()
-    game_reset(level_initial)
+    game_reset()
     game_paused = false
     game_state = game_states.started
 
@@ -1285,8 +1294,7 @@ local menu_main = {
         label = "start game",
         activate = function ()
             replay = false
-            prng = xorwow.new()
-            host_start_record()
+            host_start_record() -- note: this will initialize prng
             game_start()
         end,
     }),

@@ -18,17 +18,35 @@ var replayKey = "fbg_replay";
 messageHandlers[messageTypes.initialize] = function () {
     return [
         1, // 1 for "communication enabled"
-        0 // replay disabled for now
-        //(typeof(localStorage[replayKey]) == "string") ? 1 : 0 // replay available
+        (typeof(localStorage[replayKey]) == "string") ? 1 : 0 // replay available
     ];
 }
 
-messageHandlers[messageTypes.startRecord] = function (bytes) {
+messageHandlers[messageTypes.startRecord] = function (request) {
+    // TODO: Consider creating the seed service-side
+    var seeds = crypto.getRandomValues(new Uint32Array(4));
+    var response = [];
+    for (var i = 0; i < seeds.length; i++) {
+        var seed = seeds[i];
+        response.push(seed & 0xff);
+        response.push((seed >>> 8) & 0xff);
+        response.push((seed >>> 16) & 0xff);
+        response.push((seed >>> 24) & 0xff);
+    }
+
     recording = true;
     interactions = "";
-    for (var i = 0; i < bytes.length; i++) {
-        interactions += String.fromCharCode(bytes[i]);
+
+    // Log seed
+    for (var i = 0; i < response.length; i++) {
+        interactions += String.fromCharCode(response[i]);
     }
+
+    // Log mode and level
+    for (var i = 0; i < request.length; i++) {
+        interactions += String.fromCharCode(request[i]);
+    }
+    return response;
 };
 
 messageHandlers[messageTypes.recordFrame] = function (bytes) {
@@ -50,19 +68,20 @@ messageHandlers[messageTypes.endRecord] = function (bytes) {
 var replaying = false;
 var replay;
 var replayIndex = 0;
-messageHandlers[messageTypes.startReplay] = function (bytes) {
+messageHandlers[messageTypes.startReplay] = function () {
     replaying = true;
-    replayIndex = 16;
+    replayIndex = 0;
     replay = LZString.decompressFromBase64(localStorage[replayKey]);
 
-    var bytes = [ ];
-    for (var i = 0; i < 16; i++) {
-        bytes.push(replay.charCodeAt(i));
+    var bytes = [];
+    // Send seed, mode, level
+    for (replayIndex = 0; replayIndex < 18; replayIndex++) {
+        bytes.push(replay.charCodeAt(replayIndex));
     }
     return bytes;
 };
 
-messageHandlers[messageTypes.replayFrame] = function (bytes) {
+messageHandlers[messageTypes.replayFrame] = function () {
     if (replayIndex < replay.length) {
         return [ replay.charCodeAt(replayIndex++) ];
     }
