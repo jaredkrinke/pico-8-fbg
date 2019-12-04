@@ -926,11 +926,12 @@ function menu_item.create_choice(label, choices)
     local index = 1
     return menu_item.create({
         label = label,
+        choices = choices,
         set_index = function (self, new_index)
             -- todo: persist across runs
             if new_index ~= index then
                 index = new_index
-                choices[index].callback()
+                self.choices[index].callback()
                 return true
             end
             return false
@@ -939,6 +940,7 @@ function menu_item.create_choice(label, choices)
             local handled = false
             if btnp(buttons.z) or btnp(buttons.left) or btnp(buttons.right) then
                 local new_index = index
+                local choices = self.choices
                 if btnp(buttons.z) then
                     new_index = index % #choices + 1
                 else
@@ -960,6 +962,7 @@ function menu_item.create_choice(label, choices)
             end
             x = x + 5
 
+            local choices = self.choices
             local choice_label = choices[index].label
             color(colors.white)
             if focused then color(colors.yellow) end
@@ -1009,6 +1012,7 @@ end
 cartdata("jk_fallingblockgame")
 local cartdata_indexes = {
     initials = 1,
+    settings = 2,
 }
 
 -- player initials
@@ -1043,6 +1047,71 @@ local function create_level_choices()
         }
     end
     return choices
+end
+
+local choice_mode = menu_item.create_choice("mode:", {
+    { label = "endless", callback = function () set_game_mode(game_modes.endless) end },
+    { label = "countdown", callback = function () set_game_mode(game_modes.countdown) end },
+    { label = "cleanup", callback = function () set_game_mode(game_modes.cleanup) end },
+})
+
+local choice_level = menu_item.create_choice("level:", create_level_choices())
+local choice_music = menu_item.create_choice("music:", {
+    { label = "on", callback = function () music_muted = false end },
+    { label = "off", callback = function () music_muted = true end },
+})
+
+local settings = {
+    choice_mode,
+    choice_level,
+    choice_music,
+}
+
+function number_to_bytes(value)
+    return {
+        band(0xff, shl(value, 16)),
+        band(0xff, shl(value, 8)),
+        band(0xff, value),
+        band(0xff, lshr(value, 8)),
+    }
+end
+
+function bytes_to_number(bytes)
+    return bor(lshr(bytes[1], 16),
+        bor(lshr(bytes[2], 8),
+        bor(bytes[3],
+        bor(shl(bytes[4], 8)))))
+end
+
+function settings_initialize()
+    -- load previous values
+    local x = dget(cartdata_indexes.settings)
+    if x ~= 0 then
+        local bytes = number_to_bytes(x)
+        for i = 1, #settings, 1 do
+            local value = bytes[i]
+            local setting = settings[i]
+            local choices = setting.choices
+            if value >= 1 and value <= #choices then
+                setting:set_index(value)
+            end
+        end
+    end
+
+    -- make settings persistent
+    for i = 1, #settings, 1 do
+        local choices = settings[i].choices
+        for j = 1, #choices, 1 do
+            local choice = choices[j]
+            local callback_original = choice.callback
+            choice.callback = function ()
+                local bytes = number_to_bytes(dget(cartdata_indexes.settings))
+                bytes[i] = j
+                dset(cartdata_indexes.settings, bytes_to_number(bytes))
+                callback_original()
+            end
+        end
+    end
 end
 
 -- menus
@@ -1117,16 +1186,9 @@ local menu_items = {
             end
         end,
     }),
-    menu_item.create_choice("mode:", {
-        { label = "endless", callback = function () set_game_mode(game_modes.endless) end },
-        { label = "countdown", callback = function () set_game_mode(game_modes.countdown) end },
-        { label = "cleanup", callback = function () set_game_mode(game_modes.cleanup) end },
-    }),
-    menu_item.create_choice("level:", create_level_choices()),
-    menu_item.create_choice("music:", {
-        { label = "on", callback = function () music_muted = false end },
-        { label = "off", callback = function () music_muted = true end },
-    }),
+    choice_mode,
+    choice_level,
+    choice_music,
     menu_item.create({
         label = "view high scores",
         activate = function ()
@@ -1148,6 +1210,7 @@ local menu_items = {
 
 function _init()
     player_initials_load()
+    settings_initialize()
 
     comm_initialize()
     game_state = game_states.menu
