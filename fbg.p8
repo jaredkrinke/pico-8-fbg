@@ -85,6 +85,10 @@ function uint32.create()
     return instance
 end
 
+function uint32:get_raw()
+    return self.value
+end
+
 function uint32:set_raw(x)
     if self.value ~= x then
         self.value = x
@@ -103,6 +107,10 @@ function uint32.create_raw(x)
         instance:set_raw(x)
     end
     return instance
+end
+
+function uint32.create_from_uint32(b)
+    return uint32.create_raw(b.value)
 end
 
 function uint32.create_from_number(n)
@@ -694,6 +702,10 @@ function game_end(eligible_for_high_score, successful)
         host_end_record(score)
     end
 
+    if eligible_for_high_score then
+        high_scores_update(game_mode, player_initial_indexes, score)
+    end
+
     timer_transition = transition_period
 end
 
@@ -996,10 +1008,11 @@ cartdata("jk_fallingblockgame")
 local cartdata_indexes = {
     initials = 0,
     settings = 1,
+    scores = 4, -- through 63
 }
 
 -- player initials
-local player_initial_indexes = { 1, 2, 3 }
+player_initial_indexes = { 1, 2, 3 }
 local letters = "abcdefghijklmnopqrstuvwxyz"
 
 function player_initials_save()
@@ -1020,6 +1033,10 @@ function player_initials_load()
         return true
     end
     return false
+end
+
+function initial_index_to_string(index)
+    return sub(letters, index, index)
 end
 
 -- mode, level, etc.
@@ -1099,6 +1116,97 @@ function settings_initialize()
     end
 end
 
+-- high scores
+local high_scores_stores = {
+    cart = 1,
+    web = 2,
+}
+local high_scores = {
+    {
+        [game_modes.endless] = {},
+        [game_modes.countdown] = {},
+        [game_modes.cleanup] = {},
+    },
+    {
+        [game_modes.endless] = {},
+        [game_modes.countdown] = {},
+        [game_modes.cleanup] = {},
+    },
+}
+
+function high_scores_save()
+    local index = cartdata_indexes.scores
+    local scores = high_scores[high_scores_stores.cart]
+    for i = 1, #scores, 1 do
+        local store = scores[i]
+        for j = 1, 10, 1 do
+            local initials = 0
+            local score = 0
+            local entry = store[j]
+            if entry ~= nil then
+                initials = bytes_to_number({entry.initials[1], entry.initials[2], entry.initials[3], 0})
+                score = entry.score:get_raw()
+            end
+            dset(index, initials)
+            dset(index + 1, score)
+            index = index + 2
+        end
+    end
+end
+
+function high_scores_load()
+    local index = cartdata_indexes.scores
+    local scores = high_scores[high_scores_stores.cart]
+    for i = 1, #scores, 1 do
+        local store = scores[i]
+        for j = 1, 10, 1 do
+            local initials = dget(index)
+            if initials == 0 then
+                store[j] = nil
+            else
+                local score = dget(index + 1)
+                store[j] = {
+                    initials = number_to_bytes(initials),
+                    score = uint32.create_raw(score),
+                }
+            end
+            index = index + 2
+        end
+    end
+end
+
+local function initials_copy(initials)
+    local new_initials = {}
+    for i = 1, #initials, 1 do new_initials[i] = initials[i] end
+    return new_initials
+end
+
+local function score_copy(score)
+    return uint32.create_from_uint32(score)
+end
+
+function high_scores_update(mode, initial_indexes, score)
+    local store = high_scores[high_scores_stores.cart][mode]
+    local added = false
+    local previous = nil
+    for i = 1, 10, 1 do
+        local entry = store[i]
+        if added then
+            store[i] = previous
+            previous = entry
+        elseif entry == nil or entry.score < score then
+            added = true
+            previous = entry
+            store[i] = {
+                initials = initials_copy(initial_indexes),
+                score = score_copy(score),
+            }
+        end
+    end
+
+    high_scores_save()
+end
+
 -- menus
 function set_game_mode(new_mode)
     game_mode = new_mode
@@ -1157,10 +1265,19 @@ local choice_initials = menu_item.create({
                 color(colors.white)
             end
 
-            print(sub(letters, letter_index, letter_index), x2, y)
+            print(initial_index_to_string(letter_index), x2, y)
         end
     end,
 })
+
+function show_high_scores(mode)
+    game_state = game_states.scores
+    menu_scores.index = 1
+    if mode ~= nil then
+        menu_scores.index = 2
+        menu_scores_choice:set_index(mode)
+    end
+end
 
 local menu_main = {
     menu_item.create({
@@ -1179,8 +1296,7 @@ local menu_main = {
     menu_item.create({
         label = "view high scores",
         activate = function ()
-            -- todo
-            debug_message = "not implemented!"
+            show_high_scores()
         end,
     }),
     menu_item.create({
@@ -1211,11 +1327,30 @@ menu_first_run = {
 }
 menu_first_run.index = 2
 
+local menu_scores_mode = game_modes.endless
+menu_scores_choice = menu_item.create_choice("mode:", {
+    { label = "endless", callback = function () menu_scores_mode = game_modes.endless end },
+    { label = "countdown", callback = function () menu_scores_mode = game_modes.countdown end },
+    { label = "cleanup", callback = function () menu_scores_mode = game_modes.cleanup end },
+})
+
+menu_scores = {
+    menu_scores_choice,
+    menu_item.create({
+        label = "done",
+        activate = function ()
+            game_state = game_states.main_menu
+        end,
+    }),
+}
+menu_scores.index = 2
+
 function _init()
     local initials_set = player_initials_load()
     settings_initialize()
 
     host_initialize()
+    high_scores_load()
 
     if initials_set then
         game_state = game_states.main_menu
@@ -1263,7 +1398,6 @@ local update_handlers = {
     [game_states.main_menu] = update_menu(menu_main),
 
     [game_states.started] = function ()
-        -- todo: need a way to advance to scores page
         if piece.index == 0 and timer_next_piece > 0 then
             timer_next_piece = timer_next_piece - 1
         else
@@ -1284,9 +1418,8 @@ local update_handlers = {
                 if game_paused then
                     if game_result ~= nil then
                         if btnp(buttons.z) or btnp(buttons.x) then
-                            -- todo: should go to scores page once that exists
                             music(-1)
-                            game_state = game_states.main_menu
+                            show_high_scores(game_mode)
                         end
                     end
                 else
@@ -1369,11 +1502,7 @@ local update_handlers = {
         end
     end,
 
-    [game_states.scores] = function ()
-        if btnp(buttons.z) or btnp(buttons.x) then
-            game_state = game_states.main_menu
-        end
-    end,
+    [game_states.scores] = update_menu(menu_scores),
 
     [game_states.first_run_menu] = update_menu(menu_first_run),
 }
@@ -1459,27 +1588,37 @@ function draw_title(x, y)
     palt()
 end
 
+function draw_title_and_box(x, y)
+    draw_clear()
+    draw_title(32, 0)
+
+    local x, y = 19, 38
+    draw_box(x - 16, y - 8, 124, 124)
+
+    return x, y
+end
+
+function draw_menu_items(menu_items, x, y, bias)
+    if bias == nil then bias = 0 end
+    for i = 1, #menu_items, 1 do
+        local menu_item = menu_items[i]
+        if menu_item:should_show() then
+            local focused = i == menu_items.index
+            if focused then
+                print(">", x - 8, y, colors.light_gray)
+                color(colors.white)
+            end
+            menu_item:draw(x, y, focused);
+            y = y + 9 + bias
+        end
+    end
+end
+
 local function draw_menu(menu_items)
     return function ()
-        draw_clear()
-        draw_title(32, 0)
-    
-        local x, y = 24, 40
-        draw_box(x - 16, y - 8, 120, 120)
-        for i = 1, #menu_items, 1 do
-            local menu_item = menu_items[i]
-            if menu_item:should_show() then
-                local focused = i == menu_items.index
-                if focused then
-                    print(">", x - 8, y, colors.light_gray)
-                    color(colors.white)
-                end
-                menu_item:draw(x, y, focused);
-                y = y + 9
-            end
-        end
-    
-        print("(use arrow keys, z, x)", 20, 112, colors.white)
+        local x, y = draw_title_and_box()
+        draw_menu_items(menu_items, x, y)
+        print("(use arrow keys, z, x)", 20, 116, colors.white)
     end
 end
 
@@ -1558,7 +1697,37 @@ local draw_handlers = {
     end,
 
     [game_states.scores] = function ()
-        -- todo
+        local x, y = draw_title_and_box()
+        color(colors.white)
+        print("high scores", 42, y - 6)
+        line(x, y + 1, 127 - (x + 1), y + 1)
+        draw_menu_items(menu_scores, x, 111, -2)
+
+        y = y + 3
+        color(colors.white)
+        print("local", x + 20 - 10, y)
+        print("global", x + 49 + 20 - 12, y)
+        y = y + 7
+
+        color(colors.light_gray)
+        for i = 1, 10, 1 do
+            local sx = x
+            for j = 1, #high_scores, 1 do
+                local entry = high_scores[j][menu_scores_mode][i]
+                if entry ~= nil then
+                    local score = entry.score:to_string()
+                    local dx = 0
+                    local initials = entry.initials
+                    for k = 1, #initials, 1 do
+                        print(initial_index_to_string(initials[k]), sx + dx, y)
+                        dx = dx + 4
+                    end
+                    print(score, sx + 40 - 4 * #score, y)
+                end
+                sx = sx + 49
+            end
+            y = y + 6
+        end
     end,
 
     [game_states.first_run_menu] = draw_menu(menu_first_run),
