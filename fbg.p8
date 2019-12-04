@@ -1236,10 +1236,7 @@ local choice_initials = menu_item.create({
                 handled = true
                 local offset = -1
                 if btnp(buttons.down) then offset = 1 end
-                local new_letter_index = self.initials[self.index] + offset
-                if new_letter_index >= 1 and new_letter_index <= #letters then
-                    self.initials[self.index] = new_letter_index
-                end
+                self.initials[self.index] = (self.initials[self.index] + offset - 1) % #letters + 1
             end
         end
 
@@ -1376,7 +1373,7 @@ local function update_menu(menu_items)
             -- find next menu item
             local new_menu_item_index = menu_items.index
             while true do
-                new_menu_item_index = new_menu_item_index + offset
+                new_menu_item_index = (new_menu_item_index + offset - 1) % #menu_items + 1
                 if new_menu_item_index >= 1 and new_menu_item_index <= #menu_items then
                     if menu_items[new_menu_item_index]:should_show() then
                         menu_items.index = new_menu_item_index
