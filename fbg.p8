@@ -1290,9 +1290,9 @@ local menu_main = {
             game_start()
         end,
     }),
-    choice_initials,
     choice_mode,
     choice_level,
+    choice_initials,
     choice_music,
     menu_item.create({
         label = "view high scores",
