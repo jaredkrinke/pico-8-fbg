@@ -17,7 +17,9 @@ var replayKey = "fbg_replay";
 
 messageHandlers[messageTypes.initialize] = function () {
     return [
-        1 // 1 for "communication enabled"
+        1, // 1 for "communication enabled"
+        0 // replay disabled for now
+        //(typeof(localStorage[replayKey]) == "string") ? 1 : 0 // replay available
     ];
 }
 

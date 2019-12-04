@@ -430,13 +430,13 @@ function host_process(type, body)
 end
 
 local host_enabled = false
+local host_replay_available = false
 function host_initialize()
     -- check to see if host is able to communicate
     host_enabled = false
     local response = host_process(host_message_types.initialize)
-    if #response > 0 then
-        host_enabled = (response[1] ~= 0)
-    end
+    if #response >= 1 then host_enabled = (response[1] ~= 0) end
+    if #response >= 2 then host_replay_available = (response[2] ~= 0) end
 end
 
 function host_start_record()
@@ -1303,7 +1303,7 @@ local menu_main = {
     menu_item.create({
         -- todo: only show if a replay is available
         label = "watch replay",
-        should_show = function () return host_enabled end,
+        should_show = function () return host_enabled and host_replay_available end,
         activate = function ()
             replay = true
             host_start_replay() -- note: this will initialize prng
