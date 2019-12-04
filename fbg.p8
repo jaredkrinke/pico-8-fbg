@@ -349,79 +349,48 @@ xorwow = {
 
 local prng = nil -- initialized later
 
--- communication
-local comm_gpio_base = {
-    client = 0,
-    host = 64,
+-- communication library
+local comm_gpio = {
+    size = 0,
+    base = 1,
 }
 
-function comm_set_gpio(index, byteOrBytes)
-    if type(byteOrBytes) == "number" then
-        poke(0x5f80 + index, byteOrBytes)
-    else
-        for i = 1, #byteOrBytes, 1 do
-            poke(0x5f80 + index + i - 1, byteOrBytes[i])
-        end
+local gpio_address = 0x5f80
+function comm_gpio_write(index, byte)
+    poke(gpio_address + index, byte)
+end
+
+function comm_gpio_read(index)
+    return peek(gpio_address + index)
+end
+
+function comm_send(bytes)
+    comm_gpio_write(comm_gpio.size, #bytes)
+    local index = comm_gpio.base
+    for i = 1, #bytes, 1 do
+        comm_gpio_write(index, bytes[i])
+        index = index + 1
     end
 end
 
-function comm_get_gpio(index, count)
-    if count == nil then
-        return peek(0x5f80 + index)
-    else
-        local bytes = {}
-        for i = 1, count, 1 do
-            bytes[i] = peek(0x5f80 + index + i - 1)
-        end
-        return bytes
+function comm_receive()
+    local bytes = {}
+    local size = comm_gpio_read(comm_gpio.size)
+    local index = comm_gpio.base
+    for i = 1, size, 1 do
+        bytes[i] = comm_gpio_read(index)
+        index = index + 1
     end
+    return bytes
 end
 
-local comm_payload_read_id = 0
-function comm_read_messages()
-    local index = comm_gpio_base.host
-    local pid = comm_get_gpio(index)
-    local messages = {}
-    if pid ~= comm_payload_read_id then
-        -- todo: check to see if any messages were dropped/ignored?
-        comm_payload_read_id = pid
-
-        local count = comm_get_gpio(index + 1)
-        index = index + 2
-        for i = 1, count, 1 do
-            local size = comm_get_gpio(index)
-            local type = comm_get_gpio(index + 1)
-            messages[#messages + 1] = {
-                type = type,
-                body = comm_get_gpio(index + 2, size),
-            }
-
-            index = index + 2 + size
-        end
-    end
-    return messages
+function comm_process(bytes)
+    comm_send(bytes)
+    return comm_receive()
 end
 
-local comm_payload_send_id = 0
-function comm_send_messages(messages)
-    comm_payload_send_id = (comm_payload_send_id + 1) % 256
-    local index = comm_gpio_base.client
-    comm_set_gpio(index, comm_payload_send_id)
-    comm_set_gpio(index + 1, #messages)
-    index = index + 2
-    for i = 1, #messages, 1 do
-        comm_set_gpio(index, #messages[i].body)
-        comm_set_gpio(index + 1, messages[i].type)
-        comm_set_gpio(index + 2, messages[i].body)
-        index = index + 2 + #messages[i]
-    end
-end
-
-function comm_send_message(type, body)
-    comm_send_messages({ { type = type, body = body } })
-end
-
-local comm_message_types = {
+-- communication
+local host_message_types = {
     initialize = 1,
     start_record = 2,
     start_replay = 3,
@@ -430,21 +399,39 @@ local comm_message_types = {
     replay_frame = 6,
 }
 
-local comm_enabled = false
-function comm_initialize()
-    -- check to see if host is able to communicate
-    comm_enabled = false
-    comm_send_message(comm_message_types.initialize, {})
-    local responses = comm_read_messages()
-    if #responses > 0 and responses[1].type == comm_message_types.initialize then
-        local body = responses[1].body
-        if #body > 0 then
-            comm_enabled = (body[1] ~= 0)
+function host_send(type, body)
+    local bytes = { type }
+    if body ~= nil then
+        for i = 1, #body, 1 do
+            bytes[i + 1] = body[i]
         end
+    end
+    comm_send(bytes)
+end
+
+function host_process(type, body)
+    host_send(type, body)
+    local bytes = comm_receive()
+    if #bytes >= 1 and bytes[1] == type then
+        local response = {}
+        for i = 2, #bytes, 1 do
+            response[i - 1] = bytes[i]
+        end
+        return response
     end
 end
 
-function comm_start_record()
+local host_enabled = false
+function host_initialize()
+    -- check to see if host is able to communicate
+    host_enabled = false
+    local response = host_process(host_message_types.initialize)
+    if #response > 0 then
+        host_enabled = (response[1] ~= 0)
+    end
+end
+
+function host_start_record()
     local seeds = { prng.a, prng.b, prng.c, prng.d }
     local body = {}
     for i = 1, #seeds, 1 do
@@ -455,10 +442,10 @@ function comm_start_record()
         body[#body + 1] = band(0xff, lshr(seed, 8))
     end
 
-    comm_send_message(comm_message_types.start_record, body)
+    host_send(host_message_types.start_record, body)
 end
 
-function comm_record_frame(up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
+function host_record_frame(up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
     local byte = 0
     if up_pressed then byte += 1 end
     if down_pressed then byte += 2 end
@@ -467,27 +454,24 @@ function comm_record_frame(up_pressed, down_pressed, left_pressed, right_pressed
     if cw_pressed then byte += 16 end
     if ccw_pressed then byte += 32 end
 
-    comm_send_message(comm_message_types.record_frame, {byte})
+    host_send(host_message_types.record_frame, { byte })
 end
 
-function comm_end_record(score)
+function host_end_record(score)
     local a, b, c, d = score:to_bytes()
-    comm_send_message(comm_message_types.end_record, { a, b, c, d })
+    host_send(host_message_types.end_record, { a, b, c, d })
 end
 
-function comm_start_replay()
-    comm_send_message(comm_message_types.start_replay, {})
-
-    local responses = comm_read_messages()
-    if #responses > 0 then
-        local bytes = responses[1].body
+function host_start_replay()
+    local response = host_process(host_message_types.start_replay)
+    if #response >= 16 then
         local seeds = {}
         for i = 1, 4, 1 do
             local seed = 0
-            seed = bor(seed, lshr(bytes[4 * (i - 1) + 1], 16))
-            seed = bor(seed, lshr(bytes[4 * (i - 1) + 2], 8))
-            seed = bor(seed, bytes[4 * (i - 1) + 3])
-            seed = bor(seed, shl(bytes[4 * (i - 1) + 4], 8))
+            seed = bor(seed, lshr(response[4 * (i - 1) + 1], 16))
+            seed = bor(seed, lshr(response[4 * (i - 1) + 2], 8))
+            seed = bor(seed, response[4 * (i - 1) + 3])
+            seed = bor(seed, shl(response[4 * (i - 1) + 4], 8))
             seeds[i] = seed
         end
         
@@ -495,12 +479,10 @@ function comm_start_replay()
     end
 end
 
-function comm_replay_frame()
-    comm_send_message(comm_message_types.replay_frame, {})
-
-    local responses = comm_read_messages()
-    if #responses > 0 then
-        local byte = responses[1].body[1]
+function host_replay_frame()
+    local response = host_process(host_message_types.replay_frame)
+    if #response >= 1 then
+        local byte = response[1]
         local up_pressed = (band(0x01, byte) ~= 0)
         local down_pressed = (band(0x02, byte) ~= 0)
         local left_pressed = (band(0x04, byte) ~= 0)
@@ -707,9 +689,9 @@ function game_end(eligible_for_high_score, successful)
     game_paused = true
     game_result = successful
 
-    if comm_enabled and not replay then
+    if host_enabled and not replay then
         -- todo: send eligibility, mode, starting level, initials, etc.
-        comm_end_record(score)
+        host_end_record(score)
     end
 
     timer_transition = transition_period
@@ -1186,7 +1168,7 @@ local menu_main = {
         activate = function ()
             replay = false
             prng = xorwow.new()
-            comm_start_record()
+            host_start_record()
             game_start()
         end,
     }),
@@ -1204,10 +1186,10 @@ local menu_main = {
     menu_item.create({
         -- todo: only show if a replay is available
         label = "watch replay",
-        should_show = function () return comm_enabled end,
+        should_show = function () return host_enabled end,
         activate = function ()
             replay = true
-            comm_start_replay() -- note: this will initialize prng
+            host_start_replay() -- note: this will initialize prng
             game_start()
         end,
     }),
@@ -1233,7 +1215,7 @@ function _init()
     local initials_set = player_initials_load()
     settings_initialize()
 
-    comm_initialize()
+    host_initialize()
 
     if initials_set then
         game_state = game_states.main_menu
@@ -1316,8 +1298,8 @@ local update_handlers = {
                     local cw_pressed
                     local ccw_pressed
     
-                    if comm_enabled and replay then
-                        up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed = comm_replay_frame()
+                    if host_enabled and replay then
+                        up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed = host_replay_frame()
                     else
                         left_pressed = btn(buttons.left)
                         right_pressed = btn(buttons.right)
@@ -1325,7 +1307,7 @@ local update_handlers = {
                         cw_pressed = btn(buttons.z)
                         ccw_pressed = btn(buttons.x)
     
-                        comm_record_frame(false, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
+                        host_record_frame(false, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
                     end
     
                     if left_pressed and not input_last_left then
