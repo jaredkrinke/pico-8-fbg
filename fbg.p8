@@ -1267,13 +1267,16 @@ local choice_initials = menu_item.create({
     end,
 })
 
-function show_high_scores(mode)
+function show_high_scores(mode, score)
     game_state = game_states.scores
     menu_scores.index = 1
     if mode ~= nil then
         menu_scores.index = 2
         menu_scores_choice:set_index(mode)
     end
+
+    menu_high_scores_highlight_mode = mode
+    menu_high_scores_highlight_score = score
 end
 
 local menu_main = {
@@ -1331,6 +1334,8 @@ menu_scores_choice = menu_item.create_choice("mode:", {
     { label = "cleanup", callback = function () menu_scores_mode = game_modes.cleanup end },
 })
 
+menu_high_scores_highlight_mode = nil
+menu_high_scores_highlight_score = nil
 menu_scores = {
     menu_scores_choice,
     menu_item.create({
@@ -1416,7 +1421,7 @@ local update_handlers = {
                     if game_result ~= nil then
                         if btnp(buttons.z) or btnp(buttons.x) then
                             music(-1)
-                            show_high_scores(game_mode)
+                            show_high_scores(game_mode, score)
                         end
                     end
                 else
@@ -1706,7 +1711,7 @@ local draw_handlers = {
         print("global", x + 49 + 20 - 12, y)
         y = y + 7
 
-        color(colors.light_gray)
+        local highlighted = false
         for i = 1, 10, 1 do
             local sx = x
             for j = 1, #high_scores, 1 do
@@ -1715,6 +1720,14 @@ local draw_handlers = {
                     local score = entry.score:to_string()
                     local dx = 0
                     local initials = entry.initials
+
+                    if not highlighted and j == high_scores_stores.cart and menu_scores_mode == menu_high_scores_highlight_mode and entry.score == menu_high_scores_highlight_score then
+                        color(colors.yellow)
+                        highlighted = true
+                    else
+                        color(colors.light_gray)
+                    end
+
                     for k = 1, #initials, 1 do
                         print(initial_index_to_string(initials[k]), sx + dx, y)
                         dx = dx + 4
