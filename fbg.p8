@@ -528,7 +528,7 @@ local game_state = game_states.initializing
 local board = {}
 local lines = 0
 local level = 0
-local game_over = false
+local game_result = nil
 local game_paused = false
 
 local input_last_left = false
@@ -559,11 +559,52 @@ local piece = {
 local replay = false
 local score = uint32.create()
 
+local game_types = {
+    infinite = 1,
+    finite = 2,
+}
+
+local game_modes = {
+    -- infinite mode:
+    endless = 1,
+
+    -- finite modes:
+    countdown = 2,
+    cleanup = 3,
+}
+
+local game_mode_to_type = {
+    [game_modes.endless] = game_types.infinite,
+    [game_modes.countdown] = game_types.finite,
+    [game_modes.cleanup] = game_types.finite,
+}
+
+local game_type = game_types.infinite
+local game_mode = game_modes.endless
+
 function board_reset()
     for j=1, board_height do
         for i=1, board_width do
             board[j][i] = 0
         end
+    end
+end
+
+function board_add_garbage()
+    for j=1, 12 do
+        -- ensure row is not completely full
+        local valid = false
+
+        repeat
+            for i=1, board_width do
+                if prng:random_byte(100) < 45 then
+                    board[j][i] = prng:random_byte(#pieces) + 1
+                else
+                    board[j][i] = 0
+                    valid = true
+                end
+            end
+        until valid
     end
 end
 
@@ -625,9 +666,19 @@ function game_score_update(cleared)
     if cleared >= 1 and cleared <= #cleared_to_score then
         points:set_number(cleared_to_score[cleared])
         points:multiply_number(level + 1)
-        lines = lines + cleared
-        if level < flr(lines / 10) then
-            level = level + 1
+
+        if game_type == game_types.infinite then
+            -- infinite games count up and advance levels
+            lines = lines + cleared
+            if level < flr(lines / 10) then
+                level = level + 1
+            end
+        else
+            -- finite games count down and end in a win or loss
+            lines = max(0, lines - cleared)
+            if lines <= 0 then
+                game_end(true, true)
+            end
         end
     end
 
@@ -645,12 +696,18 @@ function game_score_update(cleared)
     end
 end
 
-function game_end()
-    sfx(sounds.lose)
+function game_end(eligible_for_high_score, successful)
+    if successful then
+        sfx(sounds.quad)
+    else
+        sfx(sounds.lose)
+    end
+
     game_paused = true
-    game_over = true
+    game_result = successful
 
     if comm_enabled and not replay then
+        -- todo: send eligibility, mode, starting level, initials, etc.
         comm_end_record(score)
     end
 
@@ -825,14 +882,24 @@ end
 
 function game_reset(level_initial)
     board_reset()
+    if game_mode == game_modes.cleanup then
+        board_add_garbage()
+    end
+
     piece.index = 0
     piece.next_index = 0
 
     piece_advance()
     score:set_raw(0)
-    lines = 0
+
+    if game_type == game_types.infinite then
+        lines = 0
+    else
+        lines = 25
+    end
+
     level = level_initial
-    game_over = false
+    game_result = nil
     game_paused = true
 
     first_drop = true
@@ -979,6 +1046,11 @@ local function create_level_choices()
 end
 
 -- menus
+function set_game_mode(new_mode)
+    game_mode = new_mode
+    game_type = game_mode_to_type[game_mode]
+end
+
 local menu_items = {
     menu_item.create({
         label = "start game",
@@ -1046,10 +1118,9 @@ local menu_items = {
         end,
     }),
     menu_item.create_choice("mode:", {
-        -- todo: implement
-        { label = "endless", callback = function ()  end },
-        { label = "limited", callback = function ()  end },
-        { label = "cleanup", callback = function ()  end },
+        { label = "endless", callback = function () set_game_mode(game_modes.endless) end },
+        { label = "countdown", callback = function () set_game_mode(game_modes.countdown) end },
+        { label = "cleanup", callback = function () set_game_mode(game_modes.cleanup) end },
     }),
     menu_item.create_choice("level:", create_level_choices()),
     menu_item.create_choice("music:", {
@@ -1120,7 +1191,7 @@ local update_handlers = {
                 board_expunge_rows()
                 piece_advance()
                 if piece.index > 0 and not piece_validate() then
-                    game_end()
+                    game_end(game_type == game_types.infinite, false)
                 end
             end
 
@@ -1129,9 +1200,9 @@ local update_handlers = {
             end
 
             if timer_transition == 0 then
-                -- game may be paused due to loss
+                -- game may be paused due to game end
                 if game_paused then
-                    if game_over then
+                    if game_result ~= nil then
                         if btnp(buttons.z) or btnp(buttons.x) then
                             -- todo: should go to scores page once that exists
                             music(-1)
@@ -1391,9 +1462,12 @@ local draw_handlers = {
         draw_box_number(128 - board_offset - 4 * 5, 32 + board_offset + 6, "lines", lines, 3)
         draw_box_number(96 - 7 * 2, 32 + board_offset + 5 * 6, "score", score, 7)
 
-        if game_over then
+        if game_result ~= nil then
+            local message = "game over!"
+            if game_result == true then message = "you win!" end
+
             rectfill(32 - 5 * 4, 64 - 3, 32 + 5 * 4, 64 + 3, colors.black)
-            print("game over!", 32 - 5 * 4 + 1, 64 - 2, colors.white)
+            print(message, 32 - #message * 2 + 1, 64 - 2, colors.white)
         end
     end,
 
