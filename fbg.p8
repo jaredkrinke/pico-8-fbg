@@ -667,9 +667,6 @@ function game_score_update(cleared)
         else
             -- finite games count down and end in a win or loss
             lines = max(0, lines - cleared)
-            if lines <= 0 then
-                game_end(true, true)
-            end
         end
     end
 
@@ -684,6 +681,10 @@ function game_score_update(cleared)
         if score > uint32_999999 then
             score:set(uint32_999999)
         end
+    end
+
+    if game_type == game_types.finite and lines == 0 then
+        game_end(true, true)
     end
 end
 
