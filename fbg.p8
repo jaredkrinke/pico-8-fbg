@@ -876,8 +876,7 @@ function game_end(eligible_for_high_score, successful)
     game_paused = true
     game_result = successful
 
-    if host_enabled and not replay then
-        -- todo: send eligibility, mode, starting level, initials, etc.
+    if host_enabled and not replay and eligible_for_high_score then
         host_end_record(score)
     end
 
