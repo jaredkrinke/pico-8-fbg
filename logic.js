@@ -14,8 +14,8 @@
     var messageHandlers = [];
 
     // Service
-    // var serviceRoot = "https://fbg.schemescape.com";
-    var serviceRoot = "http://localhost:17476"; // Local test server
+    var serviceRoot = "https://fbg.schemescape.com";
+    // var serviceRoot = "http://localhost:17476"; // Local test server
 
     function serviceGetModeRoot(mode) {
         return serviceRoot + "/scores/" + encodeURIComponent(mode);
