@@ -1362,16 +1362,16 @@ local menu_main = {
             show_high_scores()
         end,
     }),
-    menu_item.create({
-        -- todo: only show if a replay is available
-        label = "watch replay",
-        should_show = function () return host_enabled and host_replay_available end,
-        activate = function ()
-            replay = true
-            host_start_replay() -- note: this will initialize prng
-            game_start()
-        end,
-    }),
+    -- todo: re-enable, if desired
+    -- menu_item.create({
+    --     label = "watch replay",
+    --     should_show = function () return host_enabled and host_replay_available end,
+    --     activate = function ()
+    --         replay = true
+    --         host_start_replay() -- note: this will initialize prng
+    --         game_start()
+    --     end,
+    -- }),
 }
 menu_main.index = 1
 

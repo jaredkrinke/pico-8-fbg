@@ -168,7 +168,8 @@
         
             // Upload mode, seed, host name, score, replay
             var str = LZString.compressToBase64(interactions);
-            localStorage[replayKey] = str;
+            // TODO: Re-enable replays, if desired
+            // localStorage[replayKey] = str;
 
             // Reload high scores for this mode, in case anything changed
             // TODO: Smarter logic (e.g. only loading if the new score might make it)
