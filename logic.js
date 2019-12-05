@@ -45,14 +45,58 @@
         }
     }
 
-    // Recording
+    // Shared
     var recording = false;
     var interactions = "";
     var seedString = "";
     var mode = 0;
     var replayKey = "fbg_replay";
     var letters = "abcdefghijklmnopqrstuvwxyz";
+    var cachedScores = [];
 
+    // Loading scores
+    function serializeInitials(buffer, initials) {
+        for (var i = 0; i < initials.length; i++) {
+            buffer.push(letters.indexOf(initials[i]) + 1)
+        }
+    }
+
+    function startLoadingScores(mode) {
+        cachedScores[mode] = null;
+        $.ajax(serviceGetModeRoot(mode), { method: "get" })
+            .done(function (scores) {
+                var bytes = [];
+                for (var i = 0; i < scores.length; i++) {
+                    var entry = scores[i];
+                    serializeInitials(bytes, entry.initials);
+                    serializeUInt32(bytes, entry.score);
+                }
+                cachedScores[mode] = bytes;
+            })
+            .fail(function() {
+                cachedScores[mode] = -1;
+            });
+    }
+
+    messageHandlers[messageTypes.loadScores] = function (request) {
+        var mode = request[0];
+        if (cachedScores[mode] === undefined) {
+            startLoadingScores(mode);
+        }
+    }
+
+    messageHandlers[messageTypes.checkScores] = function (request) {
+        var mode = request[0];
+        var response = [];
+        if (cachedScores[mode] === -1) {
+            response.push(0xff); // Error
+        } else if (cachedScores[mode]) {
+            response = cachedScores[mode];
+        }
+        return response;
+    }
+
+    // Initialization
     messageHandlers[messageTypes.initialize] = function () {
         return [
             1, // 1 for "communication enabled"
@@ -79,6 +123,7 @@
         buffer.push((score >>> 24) & 0xff);
     }
 
+    // Recording
     messageHandlers[messageTypes.startRecord] = function (request) {
         // TODO: Consider creating the seed service-side
         var seeds = crypto.getRandomValues(new Uint32Array(4));
@@ -121,26 +166,32 @@
                 initials += letters[bytes[4 + i] - 1];
             }
         
-            // Upload mode, seed, host name, score, replay; retrieve a graph or high score list or something
+            // Upload mode, seed, host name, score, replay
             var str = LZString.compressToBase64(interactions);
             localStorage[replayKey] = str;
 
-            $.ajax(serviceGetModeRoot(mode) + "/" + seedString, {
-                method: "put",
-                data: {
-                    hostName: getHostName(),
-                    initials: initials,
-                    score: score,
-                    replay: str
-                },
-                dataType: "json"
-            })
-                .done(function () {
-                    // TODO
+            // Reload high scores for this mode, in case anything changed
+            // TODO: Smarter logic (e.g. only loading if the new score might make it)
+            cachedScores[mode] = null;
+
+            (function (mode) {
+                $.ajax(serviceGetModeRoot(mode) + "/" + seedString, {
+                    method: "put",
+                    data: {
+                        hostName: getHostName(),
+                        initials: initials,
+                        score: score,
+                        replay: str
+                    },
+                    dataType: "json"
                 })
-                .fail(function() {
-                    // TODO
-                });
+                    .done(function () {
+                        startLoadingScores(mode);
+                    })
+                    .fail(function() {
+                        // Ignore
+                    });
+            })(mode);
         }
     };
 
@@ -166,45 +217,6 @@
             return [ replay.charCodeAt(replayIndex++) ];
         }
     };
-
-    // Loading scores
-    var cachedScores = [];
-    function serializeInitials(buffer, initials) {
-        for (var i = 0; i < initials.length; i++) {
-            buffer.push(letters.indexOf(initials[i]) + 1)
-        }
-    }
-
-    messageHandlers[messageTypes.loadScores] = function (request) {
-        var mode = request[0];
-        // TODO: Consider not caching these indefinitely
-        if (cachedScores[mode] === undefined) {
-            $.ajax(serviceGetModeRoot(mode), { method: "get" })
-                .done(function (scores) {
-                    var bytes = [];
-                    for (var i = 0; i < scores.length; i++) {
-                        var entry = scores[i];
-                        serializeInitials(bytes, entry.initials);
-                        serializeUInt32(bytes, entry.score);
-                    }
-                    cachedScores[mode] = bytes;
-                })
-                .fail(function() {
-                    cachedScores[mode] = -1;
-                });
-        }
-    }
-
-    messageHandlers[messageTypes.checkScores] = function (request) {
-        var mode = request[0];
-        var response = [];
-        if (cachedScores[mode] === -1) {
-            response.push(0xff); // Error
-        } else if (cachedScores[mode]) {
-            response = cachedScores[mode];
-        }
-        return response;
-    }
 
     comm.subscribe(function (message) {
         if (message.length > 0) {

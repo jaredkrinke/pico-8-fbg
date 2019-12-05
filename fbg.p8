@@ -556,6 +556,16 @@ end
 
 local host_enabled = false
 local host_replay_available = false
+
+-- todo: consider invalidating cached web scores after a timer or after each round...
+local load_states = {
+    loading = 1,
+    loaded = 2,
+    failed = 3,
+    unavailable = 4,
+}
+local host_score_load_states = {}
+
 function host_initialize()
     -- check to see if host is able to communicate
     host_enabled = false
@@ -606,6 +616,9 @@ function host_end_record(score)
         player_initial_indexes[2],
         player_initial_indexes[3],
     })
+
+    -- sending the score will automatically start loading scores in the host
+    host_score_load_states[game_mode] = load_states.loading
 end
 
 function host_start_replay()
@@ -646,14 +659,6 @@ function host_replay_frame()
     return false, false, false, false, false, false
 end
 
--- todo: consider invalidating cached web scores after a timer or after each round...
-local load_states = {
-    loading = 1,
-    loaded = 2,
-    failed = 3,
-    unavailable = 4,
-}
-local host_score_load_states = {}
 function host_load_scores(mode)
     if host_enabled then
         host_send(host_message_types.load_scores, { mode })
@@ -1776,7 +1781,7 @@ local draw_handlers = {
         print("global", x + 49 + 20 - 12, y)
         y = y + 7
 
-        local highlighted = false
+        local highlighted = { false, false }
         for i = 1, 10, 1 do
             local sx = x
             for j = 1, #high_scores, 1 do
@@ -1786,9 +1791,15 @@ local draw_handlers = {
                     local dx = 0
                     local initials = entry.initials
 
-                    if not highlighted and j == high_scores_stores.cart and menu_scores_mode == menu_high_scores_highlight_mode and entry.score == menu_high_scores_highlight_score then
+                    if not highlighted[j]
+                        and menu_scores_mode == menu_high_scores_highlight_mode
+                        and entry.initials[1] == player_initial_indexes[1]
+                        and entry.initials[2] == player_initial_indexes[2]
+                        and entry.initials[3] == player_initial_indexes[3]
+                        and entry.score == menu_high_scores_highlight_score
+                    then
                         color(colors.yellow)
-                        highlighted = true
+                        highlighted[j] = true
                     else
                         color(colors.light_gray)
                     end
