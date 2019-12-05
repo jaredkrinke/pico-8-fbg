@@ -249,6 +249,22 @@ function uint32:to_bytes()
         band(0xff, lshr(value, 8))
 end
 
+function number_to_bytes(value)
+    return {
+        band(0xff, shl(value, 16)),
+        band(0xff, shl(value, 8)),
+        band(0xff, value),
+        band(0xff, lshr(value, 8)),
+    }
+end
+
+function bytes_to_number(bytes)
+    return bor(lshr(bytes[1], 16),
+        bor(lshr(bytes[2], 8),
+        bor(bytes[3],
+        bor(shl(bytes[4], 8)))))
+end
+
 -- game data
 local board_width = 10
 local board_height = 20
@@ -397,6 +413,113 @@ function comm_process(bytes)
     return comm_receive()
 end
 
+-- cartdata
+cartdata("jk_fallingblockgame")
+local cartdata_indexes = {
+    initials = 0,
+    settings = 1,
+    scores = 4, -- through 63
+}
+-- high scores
+local game_modes = {
+    -- infinite mode:
+    endless = 1,
+
+    -- finite modes:
+    countdown = 2,
+    cleanup = 3,
+}
+
+local high_scores_stores = {
+    cart = 1,
+    web = 2,
+}
+local high_scores = {
+    {
+        [game_modes.endless] = {},
+        [game_modes.countdown] = {},
+        [game_modes.cleanup] = {},
+    },
+    {
+        [game_modes.endless] = {},
+        [game_modes.countdown] = {},
+        [game_modes.cleanup] = {},
+    },
+}
+
+function high_scores_save()
+    local index = cartdata_indexes.scores
+    local scores = high_scores[high_scores_stores.cart]
+    for i = 1, #scores, 1 do
+        local store = scores[i]
+        for j = 1, 10, 1 do
+            local initials = 0
+            local score = 0
+            local entry = store[j]
+            if entry ~= nil then
+                initials = bytes_to_number({entry.initials[1], entry.initials[2], entry.initials[3], 0})
+                score = entry.score:get_raw()
+            end
+            dset(index, initials)
+            dset(index + 1, score)
+            index = index + 2
+        end
+    end
+end
+
+function high_scores_load()
+    local index = cartdata_indexes.scores
+    local scores = high_scores[high_scores_stores.cart]
+    for i = 1, #scores, 1 do
+        local store = scores[i]
+        for j = 1, 10, 1 do
+            local initials = dget(index)
+            if initials == 0 then
+                store[j] = nil
+            else
+                local score = dget(index + 1)
+                store[j] = {
+                    initials = number_to_bytes(initials),
+                    score = uint32.create_raw(score),
+                }
+            end
+            index = index + 2
+        end
+    end
+end
+
+local function initials_copy(initials)
+    local new_initials = {}
+    for i = 1, #initials, 1 do new_initials[i] = initials[i] end
+    return new_initials
+end
+
+local function score_copy(score)
+    return uint32.create_from_uint32(score)
+end
+
+function high_scores_update(mode, initial_indexes, score)
+    local store = high_scores[high_scores_stores.cart][mode]
+    local added = false
+    local previous = nil
+    for i = 1, 10, 1 do
+        local entry = store[i]
+        if added then
+            store[i] = previous
+            previous = entry
+        elseif entry == nil or entry.score < score then
+            added = true
+            previous = entry
+            store[i] = {
+                initials = initials_copy(initial_indexes),
+                score = score_copy(score),
+            }
+        end
+    end
+
+    high_scores_save()
+end
+
 -- communication
 local host_message_types = {
     initialize = 1,
@@ -405,6 +528,8 @@ local host_message_types = {
     record_frame = 4,
     end_record = 5,
     replay_frame = 6,
+    load_scores = 7, -- potentially kick off asynchronous request
+    check_scores = 8, -- check for result of asynchronous request
 }
 
 function host_send(type, body)
@@ -472,7 +597,15 @@ end
 
 function host_end_record(score)
     local a, b, c, d = score:to_bytes()
-    host_send(host_message_types.end_record, { a, b, c, d })
+    host_send(host_message_types.end_record, {
+        a,
+        b,
+        c,
+        d,
+        player_initial_indexes[1],
+        player_initial_indexes[2],
+        player_initial_indexes[3],
+    })
 end
 
 function host_start_replay()
@@ -511,6 +644,46 @@ function host_replay_frame()
     end
 
     return false, false, false, false, false, false
+end
+
+-- todo: consider invalidating cached web scores after a timer or after each round...
+local load_states = {
+    loading = 1,
+    loaded = 2,
+    failed = 3,
+    unavailable = 4,
+}
+local host_score_load_states = {}
+function host_load_scores(mode)
+    if host_enabled then
+        host_send(host_message_types.load_scores, { mode })
+        host_score_load_states[mode] = load_states.loading
+    else
+        host_score_load_states[mode] = load_states.unavailable
+    end
+end
+
+function host_check_scores(mode)
+    if host_score_load_states[mode] == load_states.loading then
+        local response = host_process(host_message_types.check_scores, { mode })
+        if #response == 1 and response[1] == 0xff then
+            host_score_load_states[mode] = load_states.failed
+        elseif #response >= 7 then
+            host_score_load_states[mode] = load_states.loaded
+
+            local scores = high_scores[high_scores_stores.web][mode]
+            for i = 1, 10, 1 do scores[i] = nil end
+
+            local index = 0
+            for i = 1, #response, 7 do
+                index = index + 1
+                scores[index] = {
+                    initials = { response[i], response[i + 1], response[i + 2] },
+                    score = uint32.create_from_bytes(response[i + 3], response[i + 4], response[i + 5], response[i + 6]),
+                }
+            end
+        end
+    end
 end
 
 -- overall state
@@ -562,15 +735,6 @@ local score = uint32.create()
 local game_types = {
     infinite = 1,
     finite = 2,
-}
-
-local game_modes = {
-    -- infinite mode:
-    endless = 1,
-
-    -- finite modes:
-    countdown = 2,
-    cleanup = 3,
 }
 
 local game_mode_to_type = {
@@ -1013,14 +1177,6 @@ function game_start()
     end
 end
 
--- cartdata
-cartdata("jk_fallingblockgame")
-local cartdata_indexes = {
-    initials = 0,
-    settings = 1,
-    scores = 4, -- through 63
-}
-
 -- player initials
 player_initial_indexes = { 1, 2, 3 }
 local letters = "abcdefghijklmnopqrstuvwxyz"
@@ -1079,22 +1235,6 @@ local settings = {
     choice_music,
 }
 
-function number_to_bytes(value)
-    return {
-        band(0xff, shl(value, 16)),
-        band(0xff, shl(value, 8)),
-        band(0xff, value),
-        band(0xff, lshr(value, 8)),
-    }
-end
-
-function bytes_to_number(bytes)
-    return bor(lshr(bytes[1], 16),
-        bor(lshr(bytes[2], 8),
-        bor(bytes[3],
-        bor(shl(bytes[4], 8)))))
-end
-
 function settings_initialize()
     -- load previous values
     local x = dget(cartdata_indexes.settings)
@@ -1124,97 +1264,6 @@ function settings_initialize()
             end
         end
     end
-end
-
--- high scores
-local high_scores_stores = {
-    cart = 1,
-    web = 2,
-}
-local high_scores = {
-    {
-        [game_modes.endless] = {},
-        [game_modes.countdown] = {},
-        [game_modes.cleanup] = {},
-    },
-    {
-        [game_modes.endless] = {},
-        [game_modes.countdown] = {},
-        [game_modes.cleanup] = {},
-    },
-}
-
-function high_scores_save()
-    local index = cartdata_indexes.scores
-    local scores = high_scores[high_scores_stores.cart]
-    for i = 1, #scores, 1 do
-        local store = scores[i]
-        for j = 1, 10, 1 do
-            local initials = 0
-            local score = 0
-            local entry = store[j]
-            if entry ~= nil then
-                initials = bytes_to_number({entry.initials[1], entry.initials[2], entry.initials[3], 0})
-                score = entry.score:get_raw()
-            end
-            dset(index, initials)
-            dset(index + 1, score)
-            index = index + 2
-        end
-    end
-end
-
-function high_scores_load()
-    local index = cartdata_indexes.scores
-    local scores = high_scores[high_scores_stores.cart]
-    for i = 1, #scores, 1 do
-        local store = scores[i]
-        for j = 1, 10, 1 do
-            local initials = dget(index)
-            if initials == 0 then
-                store[j] = nil
-            else
-                local score = dget(index + 1)
-                store[j] = {
-                    initials = number_to_bytes(initials),
-                    score = uint32.create_raw(score),
-                }
-            end
-            index = index + 2
-        end
-    end
-end
-
-local function initials_copy(initials)
-    local new_initials = {}
-    for i = 1, #initials, 1 do new_initials[i] = initials[i] end
-    return new_initials
-end
-
-local function score_copy(score)
-    return uint32.create_from_uint32(score)
-end
-
-function high_scores_update(mode, initial_indexes, score)
-    local store = high_scores[high_scores_stores.cart][mode]
-    local added = false
-    local previous = nil
-    for i = 1, 10, 1 do
-        local entry = store[i]
-        if added then
-            store[i] = previous
-            previous = entry
-        elseif entry == nil or entry.score < score then
-            added = true
-            previous = entry
-            store[i] = {
-                initials = initials_copy(initial_indexes),
-                score = score_copy(score),
-            }
-        end
-    end
-
-    high_scores_save()
 end
 
 -- menus
@@ -1374,39 +1423,37 @@ function _init()
     end
 end
 
-local function update_menu(menu_items)
-    return function()
-        local menu_item = menu_items[menu_items.index]
-        local handled = menu_item:handle_input()
-    
-        if not handled and (btnp(buttons.up) or btnp(buttons.down)) then
-            handled = true
-            local offset = -1
-            if btnp(buttons.down) then offset = 1 end
-    
-            -- find next menu item
-            local new_menu_item_index = menu_items.index
-            while true do
-                new_menu_item_index = (new_menu_item_index + offset - 1) % #menu_items + 1
-                if new_menu_item_index >= 1 and new_menu_item_index <= #menu_items then
-                    if menu_items[new_menu_item_index]:should_show() then
-                        menu_items.index = new_menu_item_index
-                        break
-                    end
-                else
+function update_menu(menu_items)
+    local menu_item = menu_items[menu_items.index]
+    local handled = menu_item:handle_input()
+
+    if not handled and (btnp(buttons.up) or btnp(buttons.down)) then
+        handled = true
+        local offset = -1
+        if btnp(buttons.down) then offset = 1 end
+
+        -- find next menu item
+        local new_menu_item_index = menu_items.index
+        while true do
+            new_menu_item_index = (new_menu_item_index + offset - 1) % #menu_items + 1
+            if new_menu_item_index >= 1 and new_menu_item_index <= #menu_items then
+                if menu_items[new_menu_item_index]:should_show() then
+                    menu_items.index = new_menu_item_index
                     break
                 end
+            else
+                break
             end
         end
+    end
 
-        if handled then
-            sfx(sounds.move)
-        end
+    if handled then
+        sfx(sounds.move)
     end
 end
 
 local update_handlers = {
-    [game_states.main_menu] = update_menu(menu_main),
+    [game_states.main_menu] = function () update_menu(menu_main) end,
 
     [game_states.started] = function ()
         if piece.index == 0 and timer_next_piece > 0 then
@@ -1513,9 +1560,18 @@ local update_handlers = {
         end
     end,
 
-    [game_states.scores] = update_menu(menu_scores),
+    [game_states.scores] = function ()
+        update_menu(menu_scores)
 
-    [game_states.first_run_menu] = update_menu(menu_first_run),
+        local load_state = host_score_load_states[menu_scores_mode]
+        if load_state == nil then
+            host_load_scores(menu_scores_mode)
+        elseif load_state == load_states.loading then
+            host_check_scores(menu_scores_mode)
+        end
+    end,
+
+    [game_states.first_run_menu] = function () update_menu(menu_first_run) end,
 }
 
 function _update60()
