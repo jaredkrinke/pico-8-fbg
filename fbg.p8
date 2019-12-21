@@ -1075,6 +1075,12 @@ function game_reset()
     game_result = nil
     game_paused = true
 
+    input_last_left = false
+    input_last_right = false
+    input_last_down = false
+    input_last_cw = false
+    input_last_ccw = false
+
     first_drop = true
     fast_drop = false
     fast_drop_row = 0
