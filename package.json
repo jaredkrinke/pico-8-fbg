@@ -3,12 +3,11 @@
   "version": "1.0.0",
   "description": "Falling Block Game for PICO-8",
   "main": "logic.js",
-  "author": "",
-  "license": "UNLICENSED",
   "devDependencies": {
     "del": "^5.1.0",
     "gulp": "^4.0.2",
     "gulp-htmlmin": "^5.0.1",
-    "gulp-uglify": "^3.0.2"
+    "gulp-uglify": "^3.0.2",
+    "gulp-zip": "^5.0.1"
   }
 }

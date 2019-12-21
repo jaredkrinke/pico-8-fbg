@@ -1,7 +1,9 @@
+const fs = require("fs");
 const { series, parallel, src, dest } = require("gulp");
 const del = require("del");
 const minifyJS = require("gulp-uglify");
 const minifyHTML = require("gulp-htmlmin");
+const zip = require("gulp-zip");
 
 function clean() {
     return del("output");
@@ -30,6 +32,13 @@ function javascript(cb) {
         .pipe(dest("output/"));
 }
 
-const bundle = series(clean, parallel(html, javascript, copy));
+function package() {
+    const { version } = JSON.parse(fs.readFileSync('./package.json'));
+    return src("output/*")
+        .pipe(zip(`fbg-${version}.zip`))
+        .pipe(dest("."));
+}
+
+const bundle = series(clean, parallel(html, javascript, copy), package);
 
 exports.default = bundle;
