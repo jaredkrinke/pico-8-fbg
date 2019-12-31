@@ -14,11 +14,12 @@
     var messageHandlers = [];
 
     // Service
-    var serviceRoot = "https://fbg.schemescape.com";
-    // var serviceRoot = "http://localhost:17476"; // Local test server
+    // var serviceRoot = "https://fbg.schemescape.com";
+    var serviceRoot = "http://localhost:8888/.netlify/functions/"; // Local test server
+    var serviceAddScoreEndpoint = serviceRoot + "addscore";
 
-    function serviceGetModeRoot(mode) {
-        return serviceRoot + "/scores/" + encodeURIComponent(mode);
+    function serviceGetTopScoresEndpoint(mode) {
+        return serviceRoot + "/topscores?mode=" + encodeURIComponent(mode);
     }
 
     // Local storage
@@ -63,7 +64,10 @@
 
     function startLoadingScores(mode) {
         cachedScores[mode] = null;
-        $.ajax(serviceGetModeRoot(mode), { method: "get" })
+        $.ajax(serviceGetTopScoresEndpoint(mode), {
+            method: "get",
+            dataType: "json"
+        })
             .done(function (scores) {
                 var bytes = [];
                 for (var i = 0; i < scores.length; i++) {
@@ -176,20 +180,25 @@
             cachedScores[mode] = null;
 
             (function (mode) {
-                $.ajax(serviceGetModeRoot(mode) + "/" + seedString, {
-                    method: "put",
-                    data: {
-                        hostName: getHostName(),
+                $.ajax(serviceAddScoreEndpoint, {
+                    method: "post",
+                    data: JSON.stringify({
+                        mode: mode,
+                        seed: seedString,
+                        host: getHostName(),
                         initials: initials,
                         score: score,
                         replay: str
-                    },
+                    }),
+                    contentType: "text/plain", // Use "text/plain" to avoid preflight OPTIONS request
                     dataType: "json"
                 })
-                    .done(function () {
+                    .done(function (data) {
+                        console.log(data);
                         startLoadingScores(mode);
                     })
-                    .fail(function() {
+                    .fail(function(data) {
+                        console.log(data);
                         // Ignore
                     });
             })(mode);
