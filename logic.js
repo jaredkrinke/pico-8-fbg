@@ -14,9 +14,9 @@
     var messageHandlers = [];
 
     // Service
-    // var serviceRoot = "https://fbg.schemescape.com";
-    var serviceRoot = "http://localhost:8888/.netlify/functions/"; // Local test server
-    var serviceAddScoreEndpoint = serviceRoot + "addscore";
+    var serviceRoot = "https://fbg-db.netlify.com/.netlify/functions";
+    // var serviceRoot = "http://localhost:8888/.netlify/functions"; // Local test server
+    var serviceAddScoreEndpoint = serviceRoot + "/addscore";
 
     function serviceGetTopScoresEndpoint(mode) {
         return serviceRoot + "/topscores?mode=" + encodeURIComponent(mode);
