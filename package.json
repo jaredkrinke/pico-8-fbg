@@ -1,6 +1,6 @@
 {
   "name": "fbg-client-p8",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Falling Block Game for PICO-8",
   "main": "logic.js",
   "devDependencies": {
