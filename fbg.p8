@@ -315,10 +315,6 @@ local pieces = {
         { { 2, 1 }, { 2, 0 }, { 3, 0 }, { 2, -1 } }, },
 }
 
--- debugging
-local debug = true
-local debug_message = nil
-
 -- random number generator
 xorwow = {
     new = function ()
@@ -524,10 +520,10 @@ end
 local host_message_types = {
     initialize = 1,
     start_record = 2,
-    start_replay = 3,
+    -- start_replay = 3,
     record_frame = 4,
     end_record = 5,
-    replay_frame = 6,
+    -- replay_frame = 6,
     load_scores = 7, -- potentially kick off asynchronous request
     check_scores = 8, -- check for result of asynchronous request
 }
@@ -555,9 +551,7 @@ function host_process(type, body)
 end
 
 local host_enabled = false
-local host_replay_available = false
 
--- todo: consider invalidating cached web scores after a timer or after each round...
 local load_states = {
     loading = 1,
     loaded = 2,
@@ -571,7 +565,6 @@ function host_initialize()
     host_enabled = false
     local response = host_process(host_message_types.initialize)
     if #response >= 1 then host_enabled = (response[1] ~= 0) end
-    if #response >= 2 then host_replay_available = (response[2] ~= 0) end
 end
 
 function host_start_record()
@@ -619,44 +612,6 @@ function host_end_record(score)
 
     -- sending the score will automatically start loading scores in the host
     host_score_load_states[game_mode] = load_states.loading
-end
-
-function host_start_replay()
-    local response = host_process(host_message_types.start_replay)
-    if #response >= 18 then
-        local seeds = {}
-        for i = 1, 4, 1 do
-            local seed = 0
-            seed = bor(seed, lshr(response[4 * (i - 1) + 1], 16))
-            seed = bor(seed, lshr(response[4 * (i - 1) + 2], 8))
-            seed = bor(seed, response[4 * (i - 1) + 3])
-            seed = bor(seed, shl(response[4 * (i - 1) + 4], 8))
-            seeds[i] = seed
-        end
-        
-        prng = xorwow.new_with_seed(seeds[1], seeds[2], seeds[3], seeds[4])
-
-        -- todo: this will change settings for the next launch but not update the ui...
-        set_game_mode(response[17])
-        level_initial = response[18]
-    end
-end
-
-function host_replay_frame()
-    local response = host_process(host_message_types.replay_frame)
-    if #response >= 1 then
-        local byte = response[1]
-        local up_pressed = (band(0x01, byte) ~= 0)
-        local down_pressed = (band(0x02, byte) ~= 0)
-        local left_pressed = (band(0x04, byte) ~= 0)
-        local right_pressed = (band(0x08, byte) ~= 0)
-        local cw_pressed = (band(0x10, byte) ~= 0)
-        local ccw_pressed = (band(0x20, byte) ~= 0)
-
-        return up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed
-    end
-
-    return false, false, false, false, false, false
 end
 
 function host_load_scores(mode)
@@ -734,7 +689,6 @@ local piece = {
 }
 
 -- game logic
-local replay = false
 local score = uint32.create()
 
 local game_types = {
@@ -876,7 +830,7 @@ function game_end(eligible_for_high_score, successful)
     game_paused = true
     game_result = successful
 
-    if host_enabled and not replay and eligible_for_high_score then
+    if host_enabled and eligible_for_high_score then
         host_end_record(score)
     end
 
@@ -1352,7 +1306,6 @@ local menu_main = {
     menu_item.create({
         label = "start game",
         activate = function ()
-            replay = false
             host_start_record() -- note: this will initialize prng
             game_start()
         end,
@@ -1367,16 +1320,6 @@ local menu_main = {
             show_high_scores()
         end,
     }),
-    -- todo: re-enable, if desired
-    -- menu_item.create({
-    --     label = "watch replay",
-    --     should_show = function () return host_enabled and host_replay_available end,
-    --     activate = function ()
-    --         replay = true
-    --         host_start_replay() -- note: this will initialize prng
-    --         game_start()
-    --     end,
-    -- }),
 }
 menu_main.index = 1
 
@@ -1499,17 +1442,13 @@ local update_handlers = {
                     local cw_pressed
                     local ccw_pressed
     
-                    if host_enabled and replay then
-                        up_pressed, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed = host_replay_frame()
-                    else
-                        left_pressed = btn(buttons.left)
-                        right_pressed = btn(buttons.right)
-                        down_pressed = btn(buttons.down)
-                        cw_pressed = btn(buttons.z)
-                        ccw_pressed = btn(buttons.x)
-    
-                        host_record_frame(false, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
-                    end
+                    left_pressed = btn(buttons.left)
+                    right_pressed = btn(buttons.right)
+                    down_pressed = btn(buttons.down)
+                    cw_pressed = btn(buttons.z)
+                    ccw_pressed = btn(buttons.x)
+
+                    host_record_frame(false, down_pressed, left_pressed, right_pressed, cw_pressed, ccw_pressed)
     
                     if left_pressed and not input_last_left then
                         piece_move_left()
@@ -1826,10 +1765,6 @@ local draw_handlers = {
 
 function _draw()
     draw_handlers[game_state]()
-
-    if debug and debug_message ~= nil then
-        print(debug_message, 0, 122, colors.white)
-    end
 end
 __gfx__
 dddddd00aaaaaa0011111100aaaaaa0099999900aaaaa900cccccd0000000000dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
